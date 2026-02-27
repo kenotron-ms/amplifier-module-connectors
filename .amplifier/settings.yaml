@@ -1,0 +1,4 @@
+bundle:
+  active: amplifier-template-dev
+  added:
+    amplifier-template-dev: ./.amplifier/bundle.md

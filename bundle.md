@@ -30,6 +30,10 @@ tools:
     source: git+https://github.com/microsoft/amplifier-module-tool-web@main
   - module: tool-search
     source: git+https://github.com/microsoft/amplifier-module-tool-search@main
+  - module: tool-bash
+    source: git+https://github.com/microsoft/amplifier-module-tool-bash@main
+  - module: tool-filesystem
+    source: git+https://github.com/microsoft/amplifier-module-tool-filesystem@main
 
 hooks:
   - module: hooks-logging
@@ -68,5 +72,7 @@ You have access to:
 - `slack_reply` — post messages to this Slack conversation
 - `web` — browse websites and fetch web content
 - `search` — search the web
+- `bash` — run shell commands
+- `filesystem` — read and write files
 
 Be straightforward about what you can and can't do.

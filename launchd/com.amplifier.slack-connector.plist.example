@@ -5,11 +5,12 @@
   macOS launchd service for the Amplifier Slack Connector.
 
   Setup:
-    1. Fill in the paths below (replace ALL_CAPS placeholders)
-    2. Add your tokens to EnvironmentVariables (or use a secrets manager)
-    3. Copy to ~/Library/LaunchAgents/com.amplifier.slack-connector.plist
-    4. Load: launchctl load ~/Library/LaunchAgents/com.amplifier.slack-connector.plist
-    5. Start: launchctl start com.amplifier.slack-connector
+    1. Copy this file to com.amplifier.slack-connector.plist
+    2. Fill in your actual tokens in the EnvironmentVariables section
+    3. Update paths to match your system
+    4. Copy to ~/Library/LaunchAgents/com.amplifier.slack-connector.plist
+    5. Load: launchctl load ~/Library/LaunchAgents/com.amplifier.slack-connector.plist
+    6. Start: launchctl start com.amplifier.slack-connector
 
   Management:
     Status:  launchctl list com.amplifier.slack-connector
@@ -24,25 +25,23 @@
 
     <key>ProgramArguments</key>
     <array>
-        <!-- Replace with: which slack-connector (after: pip install -e .) -->
-        <string>/REPLACE/WITH/PATH/TO/slack-connector</string>
+        <string>/Users/YOUR_USERNAME/.local/share/uv/tools/amplifier/bin/slack-connector</string>
         <string>start</string>
         <string>--channel</string>
-        <string>C0AJBKTR0JU</string>
+        <string>YOUR_CHANNEL_ID</string>
     </array>
 
     <key>EnvironmentVariables</key>
     <dict>
-        <!-- Replace with your actual tokens -->
         <key>SLACK_BOT_TOKEN</key>
-        <string>xoxb-REPLACE-WITH-YOUR-BOT-TOKEN</string>
+        <string>xoxb-your-bot-token-here</string>
         <key>SLACK_APP_TOKEN</key>
-        <string>xapp-REPLACE-WITH-YOUR-APP-TOKEN</string>
+        <string>xapp-your-app-token-here</string>
         <key>ANTHROPIC_API_KEY</key>
-        <string>sk-ant-REPLACE-WITH-YOUR-KEY</string>
+        <string>sk-ant-api03-your-api-key-here</string>
         <!-- Working directory for relative paths in bundle.md -->
         <key>HOME</key>
-        <string>/Users/ken</string>
+        <string>/Users/YOUR_USERNAME</string>
     </dict>
 
     <!-- Keep alive: launchd will restart if the process exits -->
@@ -59,7 +58,7 @@
 
     <!-- Working directory (where bundle.md lives) -->
     <key>WorkingDirectory</key>
-    <string>/Users/ken/workspace/amplifier-module-connectors</string>
+    <string>/Users/YOUR_USERNAME/workspace/amplifier-module-connectors</string>
 
     <!-- Logs -->
     <key>StandardOutPath</key>

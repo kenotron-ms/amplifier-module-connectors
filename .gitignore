@@ -15,6 +15,9 @@ build/
 .env.*
 !.env.example
 
+# Launchd plist with secrets
+launchd/com.amplifier.slack-connector.plist
+
 # Data (runtime sessions and logs)
 data/
 

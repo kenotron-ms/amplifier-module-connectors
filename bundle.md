@@ -32,6 +32,8 @@ providers:
 tools:
   - module: tool-slack-reply
     source: ./modules/tool-slack-reply
+  - module: tool-todo-list
+    source: ./modules/tool-todo-list
   - module: tool-web
     source: git+https://github.com/microsoft/amplifier-module-tool-web@main
   - module: tool-search
@@ -76,9 +78,20 @@ Your final text response is ALWAYS automatically posted — `slack_reply` is for
 
 You have access to:
 - `slack_reply` — post messages to this Slack conversation
+- `todo_list` — manage a todo list within this conversation (add, list, complete, delete tasks)
 - `web` — browse websites and fetch web content
 - `search` — search the web
 - `bash` — run shell commands
 - `filesystem` — read and write files
 
 Be straightforward about what you can and can't do.
+
+## The `todo_list` Tool
+
+Use `todo_list` to track tasks and action items:
+- `add` — create a new task
+- `list` — show all tasks (pending and completed)
+- `complete` — mark a task as done
+- `delete` — remove a task
+
+Tasks persist for the duration of this conversation session.

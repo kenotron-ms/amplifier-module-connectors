@@ -1,26 +1,50 @@
 [project]
-name = "amplifier-connector-slack"
-version = "0.1.0"
-description = "Slack connector for Amplifier — bridge Slack messages to Amplifier sessions via Socket Mode"
+name = "amplifier-connectors"
+version = "0.2.0"
+description = "Multi-platform connectors for Amplifier — bridge Slack and Teams to Amplifier sessions"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "amplifier-foundation",
+    # Slack dependencies
     "slack-bolt>=1.18",
+    # Teams dependencies
+    "botbuilder-core>=4.14",
+    "botbuilder-schema>=4.14",
+    # Shared dependencies
     "aiohttp>=3.9",
     "click>=8.0",
     "python-dotenv>=1.0",
 ]
 
+[project.optional-dependencies]
+# Install only Slack dependencies
+slack = [
+    "slack-bolt>=1.18",
+]
+# Install only Teams dependencies
+teams = [
+    "botbuilder-core>=4.14",
+    "botbuilder-schema>=4.14",
+]
+# Development dependencies
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+]
+
 [project.scripts]
 slack-connector = "slack_connector.cli:main"
+teams-connector = "teams_connector.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/connector_core", "src/slack_connector"]
+packages = ["src/connector_core", "src/slack_connector", "src/teams_connector"]
 
 [tool.ruff]
 target-version = "py311"

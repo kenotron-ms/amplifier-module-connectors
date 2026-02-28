@@ -158,70 +158,260 @@ def _unwrap_tool_result(result: Any) -> Any:
         return result
 
 
-def _format_tool_args(args: dict[str, Any], tool_name: str = "") -> str:
+def _format_tool_invocation(tool_name: str, args: dict[str, Any]) -> str:
     """
-    Format tool arguments in a concise, readable way.
+    Format tool invocation showing only what users care about.
     
-    Inspired by Claude Code - show just enough to give confidence,
-    not overwhelming JSON dumps.
+    Design: Show tool name + key argument with appropriate icon.
+    Optimized for scannability, not technical completeness.
     
-    Special handling:
-    - bash: don't truncate command argument
-    - file ops: show full file_path, truncate content
+    Returns multi-line string suitable for Slack message.
     """
     if not args:
-        return ""
+        return f"🔧 `{tool_name}`"
     
-    # Show up to 3 key arguments concisely
-    parts = []
-    shown = 0
-    max_shown = 3
-    
-    # Important args that should be shown first for file operations
-    priority_keys = []
+    # File operations - show file path
     if tool_name in ("read_file", "write_file", "edit_file"):
-        priority_keys = ["file_path"]
+        file_path = args.get("file_path", "")
+        if file_path:
+            return f"🔧 `{tool_name}`\n📄 {file_path}"
+        return f"🔧 `{tool_name}`"
     
-    # Sort keys to show priority ones first
-    sorted_keys = priority_keys + [k for k in args.keys() if k not in priority_keys]
+    # Bash - show command
+    if tool_name == "bash":
+        command = args.get("command", "")
+        if command:
+            # Truncate very long commands
+            if len(command) > 200:
+                command = command[:197] + "..."
+            return f"🔧 `{tool_name}`\n$ {command}"
+        return f"🔧 `{tool_name}`"
     
-    for key in sorted_keys:
-        if key not in args:
-            continue
+    # Grep - show pattern and path
+    if tool_name == "grep":
+        pattern = args.get("pattern", "")
+        path = args.get("path", ".")
+        if pattern:
+            return f"🔧 `{tool_name}`\n🔍 \"{pattern}\" in {path}"
+        return f"🔧 `{tool_name}`"
+    
+    # Glob - show pattern and path
+    if tool_name == "glob":
+        pattern = args.get("pattern", "")
+        path = args.get("path", ".")
+        if pattern:
+            return f"🔧 `{tool_name}`\n📁 {pattern} in {path}"
+        return f"🔧 `{tool_name}`"
+    
+    # Web fetch - show URL
+    if tool_name == "web_fetch":
+        url = args.get("url", "")
+        if url:
+            # Truncate very long URLs
+            if len(url) > 150:
+                url = url[:147] + "..."
+            return f"🔧 `{tool_name}`\n🌐 {url}"
+        return f"🔧 `{tool_name}`"
+    
+    # Web search - show query
+    if tool_name == "web_search":
+        query = args.get("query", "")
+        if query:
+            return f"🔧 `{tool_name}`\n🔍 \"{query}\""
+        return f"🔧 `{tool_name}`"
+    
+    # Slack reply - meta tool
+    if tool_name == "slack_reply":
+        return f"🔧 `{tool_name}`\n💬 [sending intermediate message]"
+    
+    # Todo list - show action and task
+    if tool_name == "todo_list":
+        action = args.get("action", "")
+        task = args.get("task", "")
+        if action and task:
+            # Truncate long task descriptions
+            if len(task) > 100:
+                task = task[:97] + "..."
+            return f"🔧 `{tool_name}`\n✅ {action} \"{task}\""
+        elif action:
+            return f"🔧 `{tool_name}`\n✅ {action}"
+        return f"🔧 `{tool_name}`"
+    
+    # Generic fallback - just show tool name
+    return f"🔧 `{tool_name}`"
+
+
+def _format_tool_result(tool_name: str, result: Any, args: dict[str, Any]) -> str:
+    """
+    Format tool result showing outcome, not raw data.
+    
+    Design: Show what happened (bytes written, matches found), not the data itself.
+    For diffs: show FULL content, only truncate individual long lines.
+    
+    Returns formatted result string suitable for Slack message.
+    """
+    # Unwrap common result structure
+    unwrapped = _unwrap_tool_result(result)
+    
+    # File operations
+    if tool_name == "read_file":
+        if isinstance(unwrapped, dict):
+            content = unwrapped.get("content", "")
+            if content:
+                line_count = len(content.split('\n'))
+                return f"✓ {line_count} lines read"
+            # Try to get file size or other metrics
+            total_lines = unwrapped.get("total_lines")
+            if total_lines:
+                return f"✓ {total_lines} lines read"
+        return "✓ file read"
+    
+    if tool_name == "write_file":
+        if isinstance(unwrapped, dict):
+            bytes_written = unwrapped.get("bytes_written")
+            if bytes_written:
+                return f"✓ {bytes_written:,} bytes written"
+        return "✓ file written"
+    
+    if tool_name == "edit_file":
+        if isinstance(unwrapped, dict):
+            replacements = unwrapped.get('replacements_made', 0)
+            bytes_written = unwrapped.get('bytes_written', 0)
             
-        if shown >= max_shown:
-            remaining = len(args) - shown
-            parts.append(f"... +{remaining} more")
-            break
-        
-        value = args[key]
-        
-        # Format value concisely
-        if isinstance(value, str):
-            # Don't truncate important identifiers
-            if key in ("command", "file_path"):
-                value_str = f'"{value}"'
-            # Truncate content fields
-            elif key in ("content", "new_string", "old_string") and len(value) > 50:
-                value_str = f'"{value[:47]}..."'
-            # Truncate long strings
-            elif len(value) > 50:
-                value_str = f'"{value[:47]}..."'
+            # Get the old and new strings from the original args
+            old_str = args.get("old_string", "")
+            new_str = args.get("new_string", "")
+            
+            if old_str and new_str:
+                # Show FULL diff - don't limit number of lines
+                # Only truncate individual lines that are too long
+                old_lines = old_str.split('\n')
+                new_lines = new_str.split('\n')
+                
+                diff_lines = []
+                diff_lines.append(f"✓ {replacements} replacement(s), {bytes_written:,} bytes")
+                diff_lines.append("")  # Blank line for readability
+                
+                # Show ALL removed lines (truncate individual long lines)
+                for line in old_lines:
+                    if len(line) > 100:
+                        diff_lines.append(f"- {line[:97]}...")
+                    else:
+                        diff_lines.append(f"- {line}")
+                
+                diff_lines.append("")  # Separator
+                
+                # Show ALL added lines (truncate individual long lines)
+                for line in new_lines:
+                    if len(line) > 100:
+                        diff_lines.append(f"+ {line[:97]}...")
+                    else:
+                        diff_lines.append(f"+ {line}")
+                
+                return '\n'.join(diff_lines)
             else:
-                value_str = f'"{value}"'
-        elif isinstance(value, (list, dict)):
-            # Just show type and length
-            if isinstance(value, list):
-                value_str = f"[{len(value)} items]"
-            else:
-                value_str = f"{{{len(value)} keys}}"
-        else:
-            value_str = str(value)
-        
-        parts.append(f"{key}={value_str}")
-        shown += 1
+                return f"✓ {replacements} replacement(s), {bytes_written:,} bytes"
+        return "✓ file edited"
     
-    return ", ".join(parts)
+    # Search/find operations
+    if tool_name == "grep":
+        if isinstance(unwrapped, dict):
+            total_matches = unwrapped.get("total_matches", 0)
+            files = unwrapped.get("files", [])
+            if total_matches and files:
+                file_count = len(files)
+                return f"✓ {total_matches} matches in {file_count} files"
+            elif total_matches:
+                return f"✓ {total_matches} matches"
+        return "✓ search complete"
+    
+    if tool_name == "glob":
+        if isinstance(unwrapped, dict):
+            total_files = unwrapped.get("total_files", 0)
+            if total_files:
+                return f"✓ {total_files} files found"
+            files = unwrapped.get("files", [])
+            if files:
+                return f"✓ {len(files)} files found"
+        return "✓ search complete"
+    
+    # Bash - show output (first ~10 lines)
+    if tool_name == "bash":
+        if isinstance(unwrapped, dict):
+            stdout = unwrapped.get("stdout", "")
+            stderr = unwrapped.get("stderr", "")
+            returncode = unwrapped.get("returncode", 0)
+            
+            # Prefer stdout, fall back to stderr
+            output = stdout if stdout else stderr
+            
+            if output:
+                lines = output.split('\n')
+                # Show first 10 lines
+                preview_lines = lines[:10]
+                result_str = '\n'.join(preview_lines)
+                
+                # Add truncation indicator if needed
+                if len(lines) > 10:
+                    result_str += f"\n... ({len(lines) - 10} more lines)"
+                
+                # Add return code if non-zero
+                if returncode != 0:
+                    result_str = f"⚠️ exit code {returncode}\n{result_str}"
+                else:
+                    result_str = f"✓ exit code 0\n{result_str}"
+                
+                return result_str
+            elif returncode == 0:
+                return "✓ exit code 0 (no output)"
+            else:
+                return f"⚠️ exit code {returncode}"
+        return "✓ command executed"
+    
+    # Web operations
+    if tool_name == "web_fetch":
+        if isinstance(unwrapped, dict):
+            total_bytes = unwrapped.get("total_bytes")
+            returned_bytes = unwrapped.get("returned_bytes")
+            if total_bytes:
+                kb = total_bytes / 1024
+                return f"✓ {kb:.1f}KB fetched"
+            elif returned_bytes:
+                kb = returned_bytes / 1024
+                return f"✓ {kb:.1f}KB fetched"
+        return "✓ fetched"
+    
+    if tool_name == "web_search":
+        if isinstance(unwrapped, dict):
+            results = unwrapped.get("results", [])
+            if results:
+                return f"✓ {len(results)} results"
+        return "✓ search complete"
+    
+    # Platform tools
+    if tool_name == "slack_reply":
+        return "✓ sent"
+    
+    if tool_name == "todo_list":
+        action = args.get("action", "")
+        if action == "add":
+            return "✓ task added"
+        elif action == "complete":
+            return "✓ task completed"
+        elif action == "delete":
+            return "✓ task deleted"
+        elif action == "list":
+            # Could show task count if available in result
+            return "✓ listed tasks"
+        return "✓ done"
+    
+    # Generic fallback - try to show something useful
+    if isinstance(unwrapped, dict):
+        # Look for common success indicators
+        if unwrapped.get("success"):
+            return "✓ success"
+    
+    return "✓ complete"
 
 
 class SlackStreamingHook:
@@ -338,6 +528,7 @@ class SlackStreamingHook:
             return
         
         lines = []
+        has_running = False
         
         # Show completed tools with checkmarks
         for item in self._tool_history:
@@ -345,15 +536,21 @@ class SlackStreamingHook:
                 lines.append(f"✓ `{item['name']}`")
             elif item["status"] == "running":
                 lines.append(f":arrows_counterclockwise: `{item['name']}`...")
+                has_running = True
         
         # If no tools yet, show thinking (animated indicator)
         if not lines:
-            text = ":hourglass_flowing_sand: ..."
+            text = ":hourglass_flowing_sand: _thinking..._"
         else:
-            # Add a "Processing..." line if we're between tools (animated indicator)
-            if self._current_tool is None:
-                lines.append(":hourglass_flowing_sand: ...")
-            text = "\n".join(lines)
+            # ALWAYS show a status indicator at the end to indicate ongoing work
+            # This makes it clear when the bot is still processing vs done
+            if has_running:
+                # Tools are actively running
+                text = "\n".join(lines)
+            else:
+                # All tools complete, but still formulating response
+                lines.append(":hourglass_flowing_sand: _formulating response..._")
+                text = "\n".join(lines)
         
         await self._update(text)
 
@@ -379,14 +576,8 @@ class SlackStreamingHook:
         # Extract arguments from tool_input (Amplifier's tool call structure)
         args = data.get("tool_input", {})
         
-        # Format args concisely (Claude Code style)
-        args_str = _format_tool_args(args, tool_name) if args else ""
-        
-        # Build the message - concise, single line
-        if args_str:
-            text = f"🔧 `{tool_name}`({args_str})"
-        else:
-            text = f"🔧 `{tool_name}`()"
+        # Format invocation with new formatter (shows key args only)
+        text = _format_tool_invocation(tool_name, args)
         
         try:
             result = await self.client.chat_postMessage(
@@ -410,9 +601,8 @@ class SlackStreamingHook:
         data = tool_entry.get("data", {})
         end_data = tool_entry.get("end_data", {})
         
-        # Extract arguments from tool_input (same as in _post_tool_message)
+        # Extract arguments from tool_input
         args = data.get("tool_input", {})
-        args_str = _format_tool_args(args, tool_name) if args else ""
         
         # Check for errors in result - try multiple possible keys
         result = (
@@ -423,123 +613,37 @@ class SlackStreamingHook:
         )
         error = end_data.get("error")
         
-        # Build updated message - show success/failure with result preview
+        # Build updated message
         if error:
-            if args_str:
-                text = f"❌ `{tool_name}`({args_str})\n_{str(error)[:100]}_"
-            else:
-                text = f"❌ `{tool_name}`()\n_{str(error)[:100]}_"
+            # Error case - show invocation + error message
+            invocation = _format_tool_invocation(tool_name, args)
+            # Replace the tool icon/emoji with error indicator
+            invocation = invocation.replace("🔧", "❌")
+            text = f"{invocation}\n_{str(error)[:200]}_"
         else:
-            # Success - show checkmark with result preview (first few lines)
-            result_preview = ""
-            if result:
-                # Unwrap common result structure
-                unwrapped = _unwrap_tool_result(result)
-                
-                # Special handling for different tool types
-                if tool_name == "bash":
-                    # Extract stdout/stderr from bash result
-                    if isinstance(unwrapped, dict):
-                        stdout = unwrapped.get("stdout", "")
-                        stderr = unwrapped.get("stderr", "")
-                        
-                        # Prefer stdout, fall back to stderr
-                        if stdout:
-                            result_str = stdout
-                        elif stderr:
-                            result_str = stderr
-                        else:
-                            result_str = str(result)
-                    else:
-                        result_str = str(unwrapped)
-                        
-                elif tool_name == "read_file":
-                    # For read_file, extract content field
-                    if isinstance(unwrapped, dict):
-                        content = unwrapped.get("content", "")
-                        if content:
-                            result_str = content
-                        else:
-                            result_str = str(result)
-                    else:
-                        result_str = str(unwrapped)
-                        
-                elif tool_name == "write_file":
-                    # For write operations, show bytes written
-                    if isinstance(unwrapped, dict):
-                        if "bytes_written" in unwrapped:
-                            result_str = f"✓ {unwrapped.get('bytes_written')} bytes written"
-                        else:
-                            result_str = "✓ File written"
-                    else:
-                        result_str = "✓ File written"
-                        
-                elif tool_name == "edit_file":
-                    # For edit operations, show a diff-style preview with markdown
-                    if isinstance(unwrapped, dict):
-                        replacements = unwrapped.get('replacements_made', 0)
-                        bytes_written = unwrapped.get('bytes_written', 0)
-                        
-                        # Get the old and new strings from the original args
-                        old_str = args.get("old_string", "")
-                        new_str = args.get("new_string", "")
-                        
-                        if old_str and new_str:
-                            # Show a line-by-line diff preview (first 3 lines of each)
-                            old_lines = old_str.split('\n')[:3]
-                            new_lines = new_str.split('\n')[:3]
-                            
-                            diff_lines = []
-                            diff_lines.append(f"✓ {replacements} replacement(s), {bytes_written} bytes")
-                            
-                            # Show removed lines
-                            for line in old_lines:
-                                preview = line[:60]
-                                if len(line) > 60:
-                                    preview += "..."
-                                diff_lines.append(f"- {preview}")
-                            
-                            if len(old_str.split('\n')) > 3:
-                                diff_lines.append("- ...")
-                            
-                            # Show added lines
-                            for line in new_lines:
-                                preview = line[:60]
-                                if len(line) > 60:
-                                    preview += "..."
-                                diff_lines.append(f"+ {preview}")
-                            
-                            if len(new_str.split('\n')) > 3:
-                                diff_lines.append("+ ...")
-                            
-                            result_str = '\n'.join(diff_lines)
-                        else:
-                            result_str = f"✓ {replacements} replacement(s), {bytes_written} bytes"
-                    else:
-                        result_str = "✓ File edited"
-                        
-                else:
-                    result_str = str(unwrapped)
-                
-                # Show first 2-3 lines or ~150 chars
-                lines = result_str.split('\n')
-                preview_lines = lines[:3]
-                result_preview = '\n'.join(preview_lines)
-                if len(result_preview) > 150:
-                    result_preview = result_preview[:147] + "..."
-                elif len(lines) > 3:
-                    result_preview += "\n..."
+            # Success - show invocation + result
+            invocation = _format_tool_invocation(tool_name, args)
+            # Replace the tool icon with success indicator
+            invocation = invocation.replace("🔧", "✅")
             
-            if args_str:
-                if result_preview:
-                    text = f"✅ `{tool_name}`({args_str})\n```\n{result_preview}\n```"
+            # Format the result using new formatter
+            result_str = _format_tool_result(tool_name, result, args)
+            
+            # Combine invocation and result
+            # For results with newlines (like diffs), use code block
+            if '\n' in result_str:
+                if tool_name == "edit_file":
+                    # Edit file diffs - use diff syntax highlighting
+                    text = f"{invocation}\n```diff\n{result_str}\n```"
+                elif tool_name == "bash":
+                    # Bash output - already formatted, just append
+                    text = f"{invocation}\n{result_str}"
                 else:
-                    text = f"✅ `{tool_name}`({args_str})"
+                    # Other multi-line results - use plain code block
+                    text = f"{invocation}\n```\n{result_str}\n```"
             else:
-                if result_preview:
-                    text = f"✅ `{tool_name}`()\n```\n{result_preview}\n```"
-                else:
-                    text = f"✅ `{tool_name}`()"
+                # Single-line results - just append
+                text = f"{invocation}\n{result_str}"
         
         try:
             await self.client.chat_update(
@@ -617,9 +721,22 @@ class SlackStreamingHook:
                     logger.debug(f"Could not post text block: {e}")
 
     async def cleanup(self) -> None:
-        """Delete the status indicator message (single mode only)."""
+        """Update status to show completion, then delete (single mode only)."""
         if self.mode == "single" and self._status_ts:
             try:
+                # First, update to show we're done (brief visual confirmation)
+                lines = []
+                for item in self._tool_history:
+                    if item["status"] == "complete":
+                        lines.append(f"✓ `{item['name']}`")
+                
+                if lines:
+                    lines.append("✓ _complete_")
+                    await self._update("\n".join(lines))
+                    # Keep the "complete" message visible for a moment
+                    await asyncio.sleep(0.5)
+                
+                # Then delete the status message
                 await self.client.chat_delete(
                     channel=self.channel,
                     ts=self._status_ts,

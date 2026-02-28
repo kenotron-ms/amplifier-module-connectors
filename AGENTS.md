@@ -445,18 +445,51 @@ echo "✅✅✅ All verifications passed!"
 
 ## Daemon Management
 
-### Restarting the Daemon
+### ⚠️ ALWAYS Use Standard Restart Script
 
-When changes are made to the codebase that require restarting the daemon:
+When code changes require restarting the daemon, **ALWAYS** use the standard restart script:
 
 ```bash
 ./restart-daemon.sh
 ```
 
-**Other management scripts available:**
-- `./manage-daemon.sh` - Full daemon management (start, stop, restart, status)
-- `./logs.sh` - View daemon logs
-- `./tail-logs.sh` - Tail daemon logs in real-time
+**DO NOT:**
+- ❌ Use `kill` directly on the process
+- ❌ Use `launchctl stop/start` manually
+- ❌ Try to restart the daemon with custom commands
+
+**WHY:**
+- The restart script handles proper shutdown, unload, reload, and restart sequence
+- Ensures clean daemon state
+- Works consistently across the project
+- Documented and maintained
+
+### Standard Daemon Management Scripts
+
+All daemon management should use these scripts (see `DAEMON.md` for details):
+
+| Script | Purpose | When to Use |
+|--------|---------|-------------|
+| `./restart-daemon.sh` | **Quick restart** | **After code changes** |
+| `./manage-daemon.sh restart` | Full restart with status | Testing new features |
+| `./manage-daemon.sh status` | Check daemon status | Verify it's running |
+| `./manage-daemon.sh logs` | View recent logs | Debug issues |
+| `./manage-daemon.sh follow` | Follow logs live | Watch activity |
+
+### Quick Development Workflow
+
+```bash
+# 1. Make code changes
+vim src/slack_connector/bridge.py
+
+# 2. Restart daemon (ALWAYS use this)
+./restart-daemon.sh
+
+# 3. Watch logs to verify
+./manage-daemon.sh follow
+
+# 4. Test in Slack
+```
 
 ### Platform Detection
 
@@ -485,3 +518,10 @@ Always check the platform before attempting daemon operations to use the correct
 - **Rule**: Use two-pizza sub-agent model for complex tasks
 - **Rule**: Each sub-agent gets minimal context (< 50 lines of reference code)
 - **Rule**: Restart daemon with `./restart-daemon.sh` after making changes (macOS) or appropriate systemctl command (Linux)
+
+### 2025-01-15
+- **Lesson**: Always use standard restart script (`./restart-daemon.sh`), never manual kill/restart
+- **Action**: Updated AGENTS.md with clear daemon management guidelines
+- **Rule**: Use `./restart-daemon.sh` for all daemon restarts during development
+- **Rule**: Use `./manage-daemon.sh` for status checks and log viewing
+- **Why**: Ensures clean shutdown/startup sequence, consistent behavior, proper daemon state

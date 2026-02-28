@@ -78,8 +78,12 @@ class TestSlackAdapterStartup:
     @pytest.mark.asyncio
     async def test_startup_handles_auth_failure(self, slack_adapter):
         """Test that startup raises ConnectionError on auth failure."""
+        from slack_sdk.errors import SlackApiError
+        
         mock_app = MagicMock()
-        mock_app.client.auth_test = AsyncMock(side_effect=Exception("Auth failed"))
+        mock_app.client.auth_test = AsyncMock(
+            side_effect=SlackApiError("Auth failed", response={"error": "invalid_auth"})
+        )
         
         with patch('src.slack_connector.adapter.AsyncApp', return_value=mock_app):
             with pytest.raises(ConnectionError, match="Slack authentication failed"):
@@ -187,7 +191,11 @@ class TestSlackAdapterReactions:
     @pytest.mark.asyncio
     async def test_add_reaction_handles_errors(self, slack_adapter, mock_bolt_app):
         """Test that reaction errors are handled gracefully."""
-        mock_bolt_app.client.reactions_add = AsyncMock(side_effect=Exception("API error"))
+        from slack_sdk.errors import SlackApiError
+        
+        mock_bolt_app.client.reactions_add = AsyncMock(
+            side_effect=SlackApiError("API error", response={"error": "already_reacted"})
+        )
         
         with patch('src.slack_connector.adapter.AsyncApp', return_value=mock_bolt_app):
             await slack_adapter.startup()
@@ -275,8 +283,8 @@ class TestSlackAdapterMessageHandling:
         assert len(received_messages) == 1
         msg = received_messages[0]
         assert msg.platform == "slack"
-        assert msg.channel == "C123ABC"
-        assert msg.user == "U456USER"
+        assert msg.channel_id == "C123ABC"
+        assert msg.user_id == "U456USER"
         assert msg.text == "Hello bot!"
         assert msg.message_id == "1234567890.123456"
         assert msg.thread_id == "1234567890.000000"

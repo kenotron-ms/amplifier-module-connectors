@@ -267,13 +267,15 @@ class SlackAdapter:
             return
         
         # Convert to UnifiedMessage
+        from datetime import datetime
         unified_msg = UnifiedMessage(
             platform="slack",
-            channel=event.get("channel", ""),
-            user=event.get("user", ""),
+            channel_id=event.get("channel", ""),
+            user_id=event.get("user", ""),
             text=event.get("text", ""),
             message_id=event.get("ts", ""),
             thread_id=event.get("thread_ts"),
+            timestamp=datetime.now(),  # Could parse from ts if needed
             raw_event=event
         )
         

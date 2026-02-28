@@ -1,5 +1,71 @@
 # Agent Working Guidelines
 
+## Two Pizza Rule: Contractor + Sub-Agents Architecture
+
+### Philosophy
+The main agent acts as a **contractor** who delegates work to specialized **sub-agents**. Each sub-agent has a small, focused context window and handles ONE specific task. This mirrors the "two pizza team" rule - if you can't feed the team with two pizzas, it's too big.
+
+### Contractor Agent Responsibilities
+1. **Break down issues** into atomic sub-tasks (30 min - 1 hour each)
+2. **Delegate to sub-agents** with clear, minimal context
+3. **Verify sub-agent output** before accepting work
+4. **Integrate verified work** into the codebase
+5. **Report status** to the user
+
+### Sub-Agent Characteristics
+- **Small context**: Only receives what's needed for their specific task
+- **Single responsibility**: One clear objective (create file, write test, verify import)
+- **Verifiable output**: Must produce testable, demonstrable results
+- **No dependencies**: Can work independently without full project context
+
+### Example Sub-Agent Delegation
+
+**Bad (Too Big):**
+```
+Sub-Agent: "Implement SessionManager and refactor SlackAmplifierBot to use it"
+Context: Entire bot.py file (437 lines)
+```
+
+**Good (Right Size):**
+```
+Sub-Agent 1: "Create SessionManager class with __init__ and prepare_bundle method"
+Context: Lines 50-54 of bot.py, PreparedBundle type signature
+
+Sub-Agent 2: "Add get_or_create_session method to SessionManager"
+Context: SessionManager class stub, lines 168-208 of bot.py
+
+Sub-Agent 3: "Write unit tests for SessionManager"
+Context: SessionManager implementation, test template
+
+Sub-Agent 4: "Update SlackAmplifierBot to use SessionManager"
+Context: SessionManager API, bot.py session-related methods
+```
+
+### Sub-Agent Task Template
+
+```markdown
+## Sub-Agent Task: [TASK_NAME]
+
+**Objective**: [One sentence description]
+
+**Context** (minimal):
+- File: path/to/file.py
+- Lines: 10-20 (only relevant section)
+- Dependencies: Class X, method Y
+
+**Deliverable**:
+- [ ] Create/modify file Z
+- [ ] Add N lines of code
+- [ ] Self-verify: imports work
+
+**Acceptance Criteria**:
+1. Code imports without error
+2. Basic functionality test passes
+3. No changes to unrelated code
+
+**Time Box**: 30-60 minutes
+```
+
 ## Core Principles
 
 ### 1. **Small, Verified Increments**
@@ -145,6 +211,56 @@ echo ""
 echo "✅✅✅ All verifications passed!"
 ```
 
+## Sub-Agent Workflow Example
+
+### Issue #9: Extract SessionManager (Contractor View)
+
+**Contractor breaks down into sub-tasks:**
+
+#### Sub-Task 9.1: Create SessionManager Skeleton
+- **Agent**: File Creator
+- **Context**: 10 lines from bot.py (lines 50-54, type hints)
+- **Output**: `session_manager.py` with class definition and `__init__`
+- **Time**: 15 minutes
+
+#### Sub-Task 9.2: Add prepare_bundle Method
+- **Agent**: Method Implementer
+- **Context**: SessionManager skeleton, lines 66-77 from bot.py
+- **Output**: `prepare_bundle()` method
+- **Time**: 20 minutes
+
+#### Sub-Task 9.3: Add get_or_create_session Method
+- **Agent**: Method Implementer
+- **Context**: SessionManager with prepare_bundle, lines 168-208 from bot.py
+- **Output**: `get_or_create_session()` method
+- **Time**: 30 minutes
+
+#### Sub-Task 9.4: Write SessionManager Tests
+- **Agent**: Test Writer
+- **Context**: SessionManager API only (not implementation details)
+- **Output**: `test_session_manager.py` with 5 tests
+- **Time**: 30 minutes
+
+#### Sub-Task 9.5: Verify SessionManager Works
+- **Agent**: Verifier
+- **Context**: SessionManager code + tests
+- **Output**: Verification report (imports, tests pass)
+- **Time**: 10 minutes
+
+#### Sub-Task 9.6: Update SlackAmplifierBot
+- **Agent**: Refactorer
+- **Context**: SessionManager API, bot.py session methods
+- **Output**: Modified bot.py using SessionManager
+- **Time**: 30 minutes
+
+#### Sub-Task 9.7: Integration Verification
+- **Agent**: Integration Tester
+- **Context**: Full updated codebase
+- **Output**: Verification that Slack bot still works
+- **Time**: 15 minutes
+
+**Total**: 7 sub-agents, ~2.5 hours, each task < 1 hour
+
 ## Lessons Learned
 
 ### 2024-02-27
@@ -153,3 +269,5 @@ echo "✅✅✅ All verifications passed!"
 - **Rule**: Never move to next issue without full verification
 - **Rule**: Always test imports, functionality, and regressions
 - **Rule**: Keep increments small (1-2 hours max per PR)
+- **Rule**: Use two-pizza sub-agent model for complex tasks
+- **Rule**: Each sub-agent gets minimal context (< 50 lines of reference code)

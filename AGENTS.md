@@ -1,5 +1,186 @@
 # Agent Working Guidelines
 
+## Documentation Rules: No Ephemeral Files
+
+### ⛔ NEVER Create Temporary All-Caps Documentation Files
+
+**FORBIDDEN:**
+- `TASK_BREAKDOWN_*.md`
+- `TODO.md`
+- `NOTES.md`
+- `PLANNING.md`
+- `IMPLEMENTATION_PLAN.md`
+
+**WHY:** These files become stale, create clutter, and duplicate information that belongs in GitHub issues.
+
+### ✅ Instead: Use GitHub Issues
+
+When you're tempted to create a planning/breakdown file, **create a GitHub issue instead**.
+
+**Example: Task Breakdown**
+
+❌ **WRONG:**
+```bash
+# Create TASK_BREAKDOWN_ISSUE_9.md with 7 sub-tasks
+```
+
+✅ **CORRECT:**
+```bash
+# Create GitHub issue with task breakdown
+gh issue create --title "Issue #9 Task Breakdown: SessionManager Sub-Tasks" \
+  --body "## Sub-Tasks
+
+### 9.1: Create SessionManager Skeleton (15 min)
+- Create src/connector_core/session_manager.py
+- Define SessionManager class
+- Add __init__ method
+
+### 9.2: Add initialize Method (20 min)
+- Add async initialize() method
+- Load and prepare bundle
+
+[... rest of breakdown ...]
+
+**Checklist:**
+- [ ] Sub-task 9.1 complete
+- [ ] Sub-task 9.2 complete
+..." \
+  --label "task-breakdown"
+```
+
+### ✅ When to Use Code Comments vs Issues
+
+**Use Code Comments when:**
+- Explaining WHY code works a certain way
+- Documenting non-obvious implementation details
+- Providing context for future maintainers
+- Explaining workarounds or edge cases
+
+```python
+# Use Optional[str] instead of str | None for Python 3.9 compatibility
+thread_id: Optional[str]
+```
+
+**Use GitHub Issues when:**
+- Planning work to be done
+- Breaking down tasks
+- Tracking progress
+- Discussing implementation approaches
+- Recording decisions
+
+### 📝 GitHub Issue Templates for Common Scenarios
+
+#### Scenario 1: Breaking Down a Large Issue
+
+```bash
+gh issue create \
+  --title "[Breakdown] Issue #9: SessionManager Implementation" \
+  --body "Parent: #9
+
+## Sub-Tasks
+
+- [ ] #[NEW] Create SessionManager skeleton
+- [ ] #[NEW] Add initialize method  
+- [ ] #[NEW] Add get_or_create_session method
+- [ ] #[NEW] Write tests
+- [ ] #[NEW] Verify integration
+
+Each sub-task will be created as a separate issue." \
+  --label "breakdown,planning"
+```
+
+Then create individual sub-task issues:
+
+```bash
+gh issue create \
+  --title "Sub-task 9.1: Create SessionManager Skeleton" \
+  --body "**Parent:** #9
+**Time Estimate:** 15 minutes
+
+## Objective
+Create basic SessionManager class structure
+
+## Context
+\`\`\`python
+# From bot.py lines 50-54
+self.prepared: Any = None
+self.sessions: dict[str, Any] = {}
+\`\`\`
+
+## Deliverables
+- [ ] Create src/connector_core/session_manager.py
+- [ ] Define SessionManager class
+- [ ] Add __init__ method
+
+## Acceptance Criteria
+- [ ] Imports without error
+- [ ] Can instantiate: SessionManager('./bundle.md')
+
+## Verification
+\`\`\`bash
+python3 -c \"from src.connector_core.session_manager import SessionManager; print('✅')\"
+\`\`\`" \
+  --label "sub-task" \
+  --assignee @me
+```
+
+#### Scenario 2: Recording a Decision
+
+```bash
+gh issue create \
+  --title "[Decision] Use Optional[str] for Python 3.9 Compatibility" \
+  --body "## Decision
+Use \`Optional[str]\` instead of \`str | None\` union syntax.
+
+## Reasoning
+- Python 3.9 doesn't support PEP 604 union syntax
+- Project requires Python 3.9+ compatibility
+- \`Optional\` from typing module works across all versions
+
+## Impact
+- All new code must use \`Optional[T]\` instead of \`T | None\`
+- Existing code using \`|\" syntax must be updated
+
+## Related
+- #4 UnifiedMessage model
+- #6 PlatformAdapter protocol" \
+  --label "decision,documentation"
+```
+
+#### Scenario 3: Implementation Notes
+
+```bash
+gh issue comment 9 --body "## Implementation Notes
+
+Discovered that session management has three parts:
+1. Bundle preparation (one-time, expensive)
+2. Session caching (per-conversation)
+3. Lock management (prevent concurrent execution)
+
+These should all be in SessionManager, not in platform-specific bot code.
+
+**Next Steps:**
+- Extract these three concerns into SessionManager
+- Make it platform-agnostic (no Slack imports)
+- Add comprehensive tests"
+```
+
+### 🔍 How to Find Information Later
+
+**Instead of searching through files:**
+```bash
+# Search issues
+gh issue list --label "decision"
+gh issue list --label "task-breakdown"
+gh issue list --search "SessionManager"
+```
+
+**Instead of reading PLANNING.md:**
+```bash
+# Read issue comments
+gh issue view 9 --comments
+```
+
 ## Two Pizza Rule: Contractor + Sub-Agents Architecture
 
 ### Philosophy

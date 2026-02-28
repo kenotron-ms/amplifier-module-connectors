@@ -5,7 +5,7 @@ Implements Pattern B (Per-Conversation Sessions) from
 foundation:docs/APPLICATION_INTEGRATION_GUIDE.md.
 
 Session model:
-- PreparedBundle: singleton, loaded ONCE at startup (expensive)
+- SessionManager: handles bundle prep + session caching + locks
 - AmplifierSession: one per Slack channel, lazily created, cached
 - asyncio.Lock: one per conversation, ensures ordered execution
 
@@ -20,6 +20,8 @@ from typing import Any
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_sdk.errors import SlackApiError
+
+from connector_core import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +49,8 @@ class SlackAmplifierBot:
         self.allowed_channel = allowed_channel
         self.streaming_mode = streaming_mode
 
-        # Amplifier state
-        self.prepared: Any = None
-        self.sessions: dict[str, Any] = {}
-        self.locks: dict[str, asyncio.Lock] = {}
+        # Amplifier state - now managed by SessionManager
+        self.session_manager = SessionManager(bundle_path)
         self._approval_systems: dict[str, Any] = {}  # conv_id -> SlackApprovalSystem
 
         # Slack state
@@ -65,16 +65,8 @@ class SlackAmplifierBot:
 
     async def startup(self) -> None:
         """Load bundle (once) and initialize Slack Bolt app."""
-        logger.info(f"Loading Amplifier bundle: {self.bundle_path}")
-        try:
-            from amplifier_foundation import load_bundle  # type: ignore[import]
-            bundle = await load_bundle(self.bundle_path)
-            self.prepared = await bundle.prepare()
-            logger.info("Amplifier bundle prepared successfully")
-        except ImportError as e:
-            raise RuntimeError(
-                "amplifier-foundation not installed. Install with: uv pip install amplifier-foundation"
-            ) from e
+        # Initialize SessionManager (loads and prepares bundle)
+        await self.session_manager.initialize()
 
         self.bolt_app = AsyncApp(token=self.slack_bot_token)
         self._register_handlers()
@@ -97,15 +89,9 @@ class SlackAmplifierBot:
             except Exception:
                 pass
 
-        for conv_id, session in list(self.sessions.items()):
-            try:
-                await session.close()
-                logger.debug(f"Closed session: {conv_id}")
-            except Exception as e:
-                logger.warning(f"Error closing session {conv_id}: {e}")
+        # Close all sessions via SessionManager
+        await self.session_manager.close_all()
 
-        self.sessions.clear()
-        self.locks.clear()
         self._approval_systems.clear()
         self._active_threads.clear()
         logger.info("Shutdown complete")
@@ -174,38 +160,36 @@ class SlackAmplifierBot:
         """Lazily create or retrieve the session and lock for a conversation."""
         conv_id = self._conversation_id(channel, thread_ts)
 
-        if conv_id not in self.sessions:
-            logger.info(f"Creating new session: {conv_id}")
-
+        # Create approval system if needed (track for this conversation)
+        if conv_id not in self._approval_systems:
             from slack_connector.bridge import SlackApprovalSystem
-
             client = self.bolt_app.client
             approval = SlackApprovalSystem(client, channel, reply_ts)
-
             self._approval_systems[conv_id] = approval
+        else:
+            approval = self._approval_systems[conv_id]
 
-            # NOTE: We do NOT pass a display_system here to avoid duplicate messages.
-            # The orchestrator would use display_system.display() to post the final
-            # response, but we handle that manually in handle_message() after formatting.
-            session = await self.prepared.create_session(
-                session_id=conv_id,
-                approval_system=approval,
-                display_system=None,  # Explicitly None to prevent duplicate posting
-            )
+        # Create SlackReplyTool for this conversation
+        platform_tool = None
+        try:
+            from tool_slack_reply import SlackReplyTool  # type: ignore[import]
+            client = self.bolt_app.client
+            platform_tool = SlackReplyTool(client=client, channel=channel, thread_ts=reply_ts)
+        except Exception as e:
+            logger.warning(f"Could not create slack_reply tool: {e}")
 
-            # Inject live SlackReplyTool with active client + channel context
-            try:
-                from tool_slack_reply import SlackReplyTool  # type: ignore[import]
-                live_tool = SlackReplyTool(client=client, channel=channel, thread_ts=reply_ts)
-                await session.coordinator.mount("tools", live_tool, name="slack_reply")
-                logger.debug(f"Mounted slack_reply tool for {conv_id}")
-            except Exception as e:
-                logger.warning(f"Could not mount slack_reply tool: {e}")
+        # Delegate to SessionManager
+        # NOTE: We do NOT pass a display_system here to avoid duplicate messages.
+        # The orchestrator would use display_system.display() to post the final
+        # response, but we handle that manually in handle_message() after formatting.
+        session, lock = await self.session_manager.get_or_create_session(
+            conversation_id=conv_id,
+            approval_system=approval,
+            display_system=None,  # Explicitly None to prevent duplicate posting
+            platform_tool=platform_tool,
+        )
 
-            self.sessions[conv_id] = session
-            self.locks[conv_id] = asyncio.Lock()
-
-        return self.sessions[conv_id], self.locks[conv_id]
+        return session, lock
 
     # ------------------------------------------------------------------
     # Message handling

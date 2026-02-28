@@ -443,6 +443,37 @@ echo "✅✅✅ All verifications passed!"
 
 **Total**: 7 sub-agents, ~2.5 hours, each task < 1 hour
 
+## Daemon Management
+
+### Restarting the Daemon
+
+When changes are made to the codebase that require restarting the daemon:
+
+```bash
+./restart-daemon.sh
+```
+
+**Other management scripts available:**
+- `./manage-daemon.sh` - Full daemon management (start, stop, restart, status)
+- `./logs.sh` - View daemon logs
+- `./tail-logs.sh` - Tail daemon logs in real-time
+
+### Platform Detection
+
+To detect the current platform:
+
+```bash
+uname -s
+# Darwin = macOS
+# Linux = Linux server
+```
+
+**Important:** 
+- On **macOS (Darwin)**: Use the shell scripts above (`./restart-daemon.sh`)
+- On **Linux servers**: May use `systemctl` commands (e.g., `sudo systemctl restart amplifier`)
+
+Always check the platform before attempting daemon operations to use the correct method.
+
 ## Lessons Learned
 
 ### 2024-02-27
@@ -453,3 +484,4 @@ echo "✅✅✅ All verifications passed!"
 - **Rule**: Keep increments small (1-2 hours max per PR)
 - **Rule**: Use two-pizza sub-agent model for complex tasks
 - **Rule**: Each sub-agent gets minimal context (< 50 lines of reference code)
+- **Rule**: Restart daemon with `./restart-daemon.sh` after making changes (macOS) or appropriate systemctl command (Linux)

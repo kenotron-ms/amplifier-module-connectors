@@ -9,12 +9,13 @@ session:
     module: loop-streaming
     source: git+https://github.com/microsoft/amplifier-module-loop-streaming@main
   context:
-    module: context-simple
-    source: git+https://github.com/microsoft/amplifier-module-context-simple@main
+    module: context-persistent
+    source: git+https://github.com/microsoft/amplifier-module-context-persistent@main
     config:
       max_tokens: 200000
       compact_threshold: 0.8
       auto_compact: true
+      storage_path: ./data/context
   memory:
     module: engram
     source: git+https://github.com/microsoft/amplifier-module-engram@main

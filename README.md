@@ -2,7 +2,7 @@
 
 A Slack bot that bridges Slack messages to [Amplifier](https://github.com/microsoft/amplifier) AI sessions via Socket Mode.
 
-**What it does:** Users send messages to a Slack channel → an Amplifier session processes them → responses are posted back to Slack. Each channel has its own persistent conversation context.
+**What it does:** Users send messages to a Slack channel → an Amplifier session processes them → responses are posted back to Slack. Each thread has its own persistent conversation context.
 
 ## Architecture
 
@@ -12,19 +12,77 @@ Slack ──── Socket Mode ────► Bot Daemon (asyncio)
                          ┌──────────▼──────────┐
                          │  SlackAmplifierBot  │
                          │  PreparedBundle ×1  │
-                         │  Sessions: per-ch.  │
+                         │  Sessions: per-thrd │
                          └──────────┬──────────┘
                                     │ session.execute()
                                     ▼
                          ┌──────────────────────┐
                          │  AmplifierSession    │
-                         │  (one per channel)   │
+                         │  (one per thread)    │
                          │  • provider-anthropic│
                          │  • loop-streaming    │
                          │  • tool-slack-reply  │
                          │  • tool-web/search   │
                          └──────────────────────┘
 ```
+
+## Progressive Status Updates
+
+The bot supports **three modes** for displaying AI activity:
+
+### Single Message Mode (Default)
+Updates one ephemeral status message, then deletes it:
+```
+🤔 Thinking...
+→ 🔄 web_search...
+→ ✓ web_search
+  🤔 Processing...
+→ [deleted, final response appears]
+```
+
+**Best for:** Clean UX, production use
+
+### Multi Message Mode
+Posts separate persistent messages for each tool (Claude Code style):
+```
+🤔 Thinking...
+[New message] 🔧 `web_search`(query="Python") → ✅ `web_search`(query="Python")
+[New message] 🔧 `read_file`(file_path="main.py") → ✅ `read_file`(file_path="main.py")
+[Final response appears]
+```
+
+**Best for:** Debugging, auditing, tool transparency
+**Features:** Concise args (max 3 params), success/failure indicators, no result dumps
+
+### Blocks Mode
+Posts separate messages for **each content block** (thinking, tools, intermediate text):
+```
+[Message 1] _thinking..._
+[Message 2] _💭 I need to search for information..._
+[Message 3] 🔧 `web_search`(query="Python")
+[Message 4] ✅ `web_search`(query="Python")
+[Message 5] Intermediate text response
+[Message 6] 🔧 `read_file`(file_path="main.py")
+[Message 7] ✅ `read_file`(file_path="main.py")
+[Final response appears]
+```
+
+**Best for:** Maximum transparency, understanding AI reasoning, educational use
+**Features:** Thinking in _italic_ (light treatment), concise tool display
+
+**Usage:**
+```bash
+# Default (single message)
+slack-connector start
+
+# Multi message mode (tool transparency)
+slack-connector start --streaming-mode multi
+
+# Blocks mode (full content streaming)
+slack-connector start --streaming-mode blocks
+```
+
+See [PROGRESSIVE_UPDATES.md](./PROGRESSIVE_UPDATES.md) for details.
 
 ## Setup
 
@@ -98,9 +156,45 @@ launchctl start com.amplifier.slack-connector
 # Check status
 launchctl list com.amplifier.slack-connector
 
-# View logs
-tail -f /tmp/slack-connector.log
+# View logs (multiple options)
+./logs.sh                    # Simple: tail both logs
+./tail-logs.sh               # Advanced: with color and filtering
+./tail-logs.sh --help        # See all options
 ```
+
+## Viewing Logs
+
+Two scripts are provided for viewing daemon logs:
+
+### Simple Log Viewer (`logs.sh`)
+```bash
+./logs.sh    # Tail both stdout and stderr logs
+```
+
+### Advanced Log Viewer (`tail-logs.sh`)
+```bash
+# Basic usage
+./tail-logs.sh                      # Tail both logs with color
+
+# Show only errors
+./tail-logs.sh -e
+
+# Show last 100 lines
+./tail-logs.sh -n 100
+
+# Filter for specific content
+./tail-logs.sh --grep "tool"        # Show tool-related logs
+./tail-logs.sh --level ERROR        # Show only ERROR level logs
+
+# See all options
+./tail-logs.sh --help
+```
+
+**Features:**
+- Color-coded output (ERROR=red, WARNING=yellow, INFO=green, DEBUG=gray)
+- Filter by log level or pattern
+- Follow mode (default) or show last N lines
+- Highlights tool execution and session events
 
 ## Configuration
 

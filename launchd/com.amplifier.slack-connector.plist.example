@@ -42,6 +42,10 @@
         <!-- Working directory for relative paths in bundle.md -->
         <key>HOME</key>
         <string>/Users/YOUR_USERNAME</string>
+        <!-- PATH: Use your full login shell PATH to ensure all tools are available -->
+        <!-- Get it with: bash -l -c 'echo $PATH' -->
+        <key>PATH</key>
+        <string>/Users/YOUR_USERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
     </dict>
 
     <!-- Keep alive: launchd will restart if the process exits -->

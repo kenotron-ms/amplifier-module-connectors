@@ -25,7 +25,14 @@ def cli() -> None:
 @click.option("--channel", default=None, help="Slack channel ID to watch (overrides .env)")
 @click.option("--env-file", default=".env", show_default=True, help="Path to .env file")
 @click.option("--debug", is_flag=True, default=False, help="Enable debug logging")
-def start(bundle: str | None, channel: str | None, env_file: str, debug: bool) -> None:
+@click.option(
+    "--streaming-mode",
+    type=click.Choice(["single", "multi", "blocks"], case_sensitive=False),
+    default="single",
+    show_default=True,
+    help="Display mode: 'single' (ephemeral status), 'multi' (per-tool messages), 'blocks' (all content blocks)"
+)
+def start(bundle: str | None, channel: str | None, env_file: str, debug: bool, streaming_mode: str) -> None:
     """Start the Slack connector bot daemon."""
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -54,6 +61,7 @@ def start(bundle: str | None, channel: str | None, env_file: str, debug: bool) -
         slack_app_token=app_token,
         slack_bot_token=bot_token,
         allowed_channel=allowed_channel,
+        streaming_mode=streaming_mode,
     )
 
     async def run() -> None:

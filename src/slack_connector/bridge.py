@@ -113,15 +113,22 @@ class SlackDisplaySystem:
         self.thread_ts = thread_ts
 
     async def display(self, content: str, metadata: dict[str, Any] | None = None) -> None:
-        """Post content as a Slack message."""
+        """Post content as a Slack message with formatting."""
         try:
-            await self.client.chat_postMessage(
-                channel=self.channel,
-                thread_ts=self.thread_ts,
-                text=content,
-                unfurl_links=False,
-                unfurl_media=False,
-            )
+            from slack_connector.formatter import format_for_slack
+            
+            # Format the content (clean artifacts + convert Markdown)
+            formatted = format_for_slack(content, use_blocks=True)
+            
+            if formatted["text"]:  # Only post if there's actual content
+                await self.client.chat_postMessage(
+                    channel=self.channel,
+                    thread_ts=self.thread_ts,
+                    text=formatted["text"],
+                    blocks=formatted.get("blocks"),
+                    unfurl_links=False,
+                    unfurl_media=False,
+                )
         except SlackApiError as e:
             logger.error(f"Could not display content in Slack: {e}")
 

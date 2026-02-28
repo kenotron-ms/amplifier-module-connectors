@@ -155,18 +155,20 @@ class SlackAmplifierBot:
         if conv_id not in self.sessions:
             logger.info(f"Creating new session: {conv_id}")
 
-            from slack_connector.bridge import SlackApprovalSystem, SlackDisplaySystem
+            from slack_connector.bridge import SlackApprovalSystem
 
             client = self.bolt_app.client
             approval = SlackApprovalSystem(client, channel, reply_ts)
-            display = SlackDisplaySystem(client, channel, reply_ts)
 
             self._approval_systems[conv_id] = approval
 
+            # NOTE: We do NOT pass a display_system here to avoid duplicate messages.
+            # The orchestrator would use display_system.display() to post the final
+            # response, but we handle that manually in handle_message() after formatting.
             session = await self.prepared.create_session(
                 session_id=conv_id,
                 approval_system=approval,
-                display_system=display,
+                display_system=None,  # Explicitly None to prevent duplicate posting
             )
 
             # Inject live SlackReplyTool with active client + channel context
@@ -236,15 +238,22 @@ class SlackAmplifierBot:
                 prompt = f"<@{user}>: {text.strip()}"
                 response = await session.execute(prompt)
 
-                # Post the final response
+                # Format and post the final response
                 if response and response.strip():
-                    await client.chat_postMessage(
-                        channel=channel,
-                        thread_ts=reply_ts,
-                        text=response,
-                        unfurl_links=False,
-                        unfurl_media=False,
-                    )
+                    from slack_connector.formatter import format_for_slack
+                    
+                    # Format response: clean artifacts + convert Markdown to Slack format
+                    formatted = format_for_slack(response, use_blocks=True)
+                    
+                    if formatted["text"]:  # Only post if there's actual content
+                        await client.chat_postMessage(
+                            channel=channel,
+                            thread_ts=reply_ts,
+                            text=formatted["text"],
+                            blocks=formatted.get("blocks"),
+                            unfurl_links=False,
+                            unfurl_media=False,
+                        )
 
             except Exception as e:
                 logger.exception(f"Error handling message from {user} in {channel}")

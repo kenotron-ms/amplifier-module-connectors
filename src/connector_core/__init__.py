@@ -6,5 +6,6 @@ across different chat platforms (Slack, Teams, etc.).
 """
 
 from .models import UnifiedMessage
+from .protocols import PlatformAdapter, ApprovalPrompt
 
-__all__ = ["UnifiedMessage"]
+__all__ = ["UnifiedMessage", "PlatformAdapter", "ApprovalPrompt"]

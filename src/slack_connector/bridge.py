@@ -133,6 +133,31 @@ class SlackDisplaySystem:
             logger.error(f"Could not display content in Slack: {e}")
 
 
+def _unwrap_tool_result(result: Any) -> Any:
+    """
+    Unwrap common tool result structure: {'success': True, 'output': {...}}
+    Returns the inner output or the original result if not wrapped.
+    """
+    import json
+    
+    try:
+        # Parse string to dict if needed
+        if isinstance(result, str):
+            result_obj = json.loads(result)
+        elif isinstance(result, dict):
+            result_obj = result
+        else:
+            return result
+        
+        # Unwrap success/output wrapper
+        if "output" in result_obj:
+            return result_obj["output"]
+        
+        return result_obj
+    except (json.JSONDecodeError, AttributeError, TypeError, KeyError):
+        return result
+
+
 def _format_tool_args(args: dict[str, Any], tool_name: str = "") -> str:
     """
     Format tool arguments in a concise, readable way.
@@ -140,7 +165,9 @@ def _format_tool_args(args: dict[str, Any], tool_name: str = "") -> str:
     Inspired by Claude Code - show just enough to give confidence,
     not overwhelming JSON dumps.
     
-    Special handling for bash: don't truncate the command argument.
+    Special handling:
+    - bash: don't truncate command argument
+    - file ops: show full file_path, truncate content
     """
     if not args:
         return ""
@@ -150,17 +177,33 @@ def _format_tool_args(args: dict[str, Any], tool_name: str = "") -> str:
     shown = 0
     max_shown = 3
     
-    for key, value in args.items():
+    # Important args that should be shown first for file operations
+    priority_keys = []
+    if tool_name in ("read_file", "write_file", "edit_file"):
+        priority_keys = ["file_path"]
+    
+    # Sort keys to show priority ones first
+    sorted_keys = priority_keys + [k for k in args.keys() if k not in priority_keys]
+    
+    for key in sorted_keys:
+        if key not in args:
+            continue
+            
         if shown >= max_shown:
             remaining = len(args) - shown
             parts.append(f"... +{remaining} more")
             break
         
+        value = args[key]
+        
         # Format value concisely
         if isinstance(value, str):
-            # Special case: bash command - don't truncate
-            if tool_name == "bash" and key == "command":
+            # Don't truncate important identifiers
+            if key in ("command", "file_path"):
                 value_str = f'"{value}"'
+            # Truncate content fields
+            elif key in ("content", "new_string", "old_string") and len(value) > 50:
+                value_str = f'"{value[:47]}..."'
             # Truncate long strings
             elif len(value) > 50:
                 value_str = f'"{value[:47]}..."'
@@ -390,41 +433,93 @@ class SlackStreamingHook:
             # Success - show checkmark with result preview (first few lines)
             result_preview = ""
             if result:
-                # Special handling for bash: extract stdout from result structure
+                # Unwrap common result structure
+                unwrapped = _unwrap_tool_result(result)
+                
+                # Special handling for different tool types
                 if tool_name == "bash":
-                    import json
-                    try:
-                        # Handle different result structures
-                        if isinstance(result, str):
-                            # Try parsing as JSON string
-                            result_obj = json.loads(result)
-                        elif isinstance(result, dict):
-                            result_obj = result
-                        else:
-                            result_obj = None
+                    # Extract stdout/stderr from bash result
+                    if isinstance(unwrapped, dict):
+                        stdout = unwrapped.get("stdout", "")
+                        stderr = unwrapped.get("stderr", "")
                         
-                        # Try multiple paths to stdout
-                        if result_obj:
-                            # Direct stdout field
-                            stdout = result_obj.get("stdout")
-                            # Or nested in output
-                            if not stdout and "output" in result_obj:
-                                output = result_obj["output"]
-                                if isinstance(output, dict):
-                                    stdout = output.get("stdout")
-                                elif isinstance(output, str):
-                                    stdout = output
-                            
-                            if stdout:
-                                result_str = stdout
-                            else:
-                                result_str = str(result)
+                        # Prefer stdout, fall back to stderr
+                        if stdout:
+                            result_str = stdout
+                        elif stderr:
+                            result_str = stderr
                         else:
                             result_str = str(result)
-                    except (json.JSONDecodeError, AttributeError, TypeError, KeyError):
-                        result_str = str(result)
+                    else:
+                        result_str = str(unwrapped)
+                        
+                elif tool_name == "read_file":
+                    # For read_file, extract content field
+                    if isinstance(unwrapped, dict):
+                        content = unwrapped.get("content", "")
+                        if content:
+                            result_str = content
+                        else:
+                            result_str = str(result)
+                    else:
+                        result_str = str(unwrapped)
+                        
+                elif tool_name == "write_file":
+                    # For write operations, show bytes written
+                    if isinstance(unwrapped, dict):
+                        if "bytes_written" in unwrapped:
+                            result_str = f"✓ {unwrapped.get('bytes_written')} bytes written"
+                        else:
+                            result_str = "✓ File written"
+                    else:
+                        result_str = "✓ File written"
+                        
+                elif tool_name == "edit_file":
+                    # For edit operations, show a diff-style preview with markdown
+                    if isinstance(unwrapped, dict):
+                        replacements = unwrapped.get('replacements_made', 0)
+                        bytes_written = unwrapped.get('bytes_written', 0)
+                        
+                        # Get the old and new strings from the original args
+                        old_str = args.get("old_string", "")
+                        new_str = args.get("new_string", "")
+                        
+                        if old_str and new_str:
+                            # Show a line-by-line diff preview (first 3 lines of each)
+                            old_lines = old_str.split('\n')[:3]
+                            new_lines = new_str.split('\n')[:3]
+                            
+                            diff_lines = []
+                            diff_lines.append(f"✓ {replacements} replacement(s), {bytes_written} bytes")
+                            
+                            # Show removed lines
+                            for line in old_lines:
+                                preview = line[:60]
+                                if len(line) > 60:
+                                    preview += "..."
+                                diff_lines.append(f"- {preview}")
+                            
+                            if len(old_str.split('\n')) > 3:
+                                diff_lines.append("- ...")
+                            
+                            # Show added lines
+                            for line in new_lines:
+                                preview = line[:60]
+                                if len(line) > 60:
+                                    preview += "..."
+                                diff_lines.append(f"+ {preview}")
+                            
+                            if len(new_str.split('\n')) > 3:
+                                diff_lines.append("+ ...")
+                            
+                            result_str = '\n'.join(diff_lines)
+                        else:
+                            result_str = f"✓ {replacements} replacement(s), {bytes_written} bytes"
+                    else:
+                        result_str = "✓ File edited"
+                        
                 else:
-                    result_str = str(result)
+                    result_str = str(unwrapped)
                 
                 # Show first 2-3 lines or ~150 chars
                 lines = result_str.split('\n')

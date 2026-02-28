@@ -390,22 +390,38 @@ class SlackStreamingHook:
             # Success - show checkmark with result preview (first few lines)
             result_preview = ""
             if result:
-                # Special handling for bash: parse JSON and extract stdout
+                # Special handling for bash: extract stdout from result structure
                 if tool_name == "bash":
                     import json
                     try:
+                        # Handle different result structures
                         if isinstance(result, str):
+                            # Try parsing as JSON string
                             result_obj = json.loads(result)
-                        else:
+                        elif isinstance(result, dict):
                             result_obj = result
+                        else:
+                            result_obj = None
                         
-                        # Extract stdout from the bash result
-                        stdout = result_obj.get("stdout", "")
-                        if stdout:
-                            result_str = stdout
+                        # Try multiple paths to stdout
+                        if result_obj:
+                            # Direct stdout field
+                            stdout = result_obj.get("stdout")
+                            # Or nested in output
+                            if not stdout and "output" in result_obj:
+                                output = result_obj["output"]
+                                if isinstance(output, dict):
+                                    stdout = output.get("stdout")
+                                elif isinstance(output, str):
+                                    stdout = output
+                            
+                            if stdout:
+                                result_str = stdout
+                            else:
+                                result_str = str(result)
                         else:
                             result_str = str(result)
-                    except (json.JSONDecodeError, AttributeError, TypeError):
+                    except (json.JSONDecodeError, AttributeError, TypeError, KeyError):
                         result_str = str(result)
                 else:
                     result_str = str(result)

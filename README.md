@@ -16,12 +16,14 @@ Bridge chat platforms (Slack, Microsoft Teams) to [Amplifier](https://github.com
 # Install
 pip install -e .
 
-# Configure (create .env with your tokens)
-cp .env.example .env
+# Onboard (interactive setup verification)
+slack-connector onboard
 
 # Run
-slack-connector --channel C0AJBKTR0JU
+slack-connector start
 ```
+
+**Setup Guide:** [src/slack_connector/docs/SETUP.md](./src/slack_connector/docs/SETUP.md)
 
 ### Teams Connector
 
@@ -29,11 +31,14 @@ slack-connector --channel C0AJBKTR0JU
 # Install
 pip install -e .[teams]
 
+# Onboard (interactive setup verification)
+teams-connector onboard
+
 # Run
-teams-connector --app-id YOUR_APP_ID --app-password YOUR_PASSWORD
+teams-connector start
 ```
 
-See [Slack Setup Guide](./docs/slack-setup.md) and [Teams Setup Guide](./docs/teams-setup.md) for detailed instructions.
+**Setup Guide:** [src/teams_connector/docs/SETUP.md](./src/teams_connector/docs/SETUP.md)
 
 ## 📋 Features
 

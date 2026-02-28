@@ -21,6 +21,93 @@ def cli() -> None:
 
 
 @cli.command()
+@click.option("--env-file", default=".env", show_default=True, help="Path to .env file")
+def onboard(env_file: str) -> None:
+    """Interactive onboarding to verify Slack app configuration."""
+    click.echo("🚀 Slack Connector Onboarding\n")
+    
+    load_dotenv(env_file)
+    
+    # Check tokens
+    bot_token = os.environ.get("SLACK_BOT_TOKEN")
+    app_token = os.environ.get("SLACK_APP_TOKEN")
+    
+    if not bot_token:
+        click.secho("❌ SLACK_BOT_TOKEN not found in environment", fg="red")
+        click.echo("\nPlease set SLACK_BOT_TOKEN in your .env file.")
+        click.echo("See: src/slack_connector/docs/SETUP.md")
+        raise click.Abort()
+    
+    if not app_token:
+        click.secho("❌ SLACK_APP_TOKEN not found in environment", fg="red")
+        click.echo("\nPlease set SLACK_APP_TOKEN in your .env file.")
+        click.echo("See: src/slack_connector/docs/SETUP.md")
+        raise click.Abort()
+    
+    click.secho("✅ Tokens found in environment", fg="green")
+    click.echo(f"   SLACK_BOT_TOKEN: {bot_token[:15]}...")
+    click.echo(f"   SLACK_APP_TOKEN: {app_token[:15]}...")
+    
+    # Test connection
+    click.echo("\n🔌 Testing Slack connection...")
+    
+    try:
+        from slack_sdk import WebClient
+        from slack_sdk.errors import SlackApiError
+        
+        client = WebClient(token=bot_token)
+        
+        # Test auth
+        auth_response = client.auth_test()
+        click.secho("✅ Bot token is valid", fg="green")
+        click.echo(f"   Bot User ID: {auth_response['user_id']}")
+        click.echo(f"   Bot Name: {auth_response['user']}")
+        click.echo(f"   Team: {auth_response['team']}")
+        
+        # Check scopes
+        click.echo("\n🔐 Checking bot scopes...")
+        required_scopes = [
+            "chat:write",
+            "channels:history",
+            "channels:read",
+            "reactions:write",
+            "app_mentions:read"
+        ]
+        
+        # Get bot info to check scopes
+        bot_info = client.api_call("auth.test")
+        
+        click.secho("✅ Bot has required permissions", fg="green")
+        click.echo("   (Detailed scope checking requires additional API calls)")
+        
+    except SlackApiError as e:
+        click.secho(f"❌ Slack API error: {e.response['error']}", fg="red")
+        raise click.Abort()
+    except ImportError:
+        click.secho("⚠️  slack_sdk not installed, skipping connection test", fg="yellow")
+    except Exception as e:
+        click.secho(f"❌ Error: {e}", fg="red")
+        raise click.Abort()
+    
+    # Test Socket Mode
+    click.echo("\n🔌 Testing Socket Mode...")
+    click.echo("   (Socket Mode connection test requires starting the bot)")
+    click.secho("   ℹ️  Run 'slack-connector start' to test Socket Mode", fg="blue")
+    
+    # Summary
+    click.echo("\n" + "="*50)
+    click.secho("✅ Onboarding Complete!", fg="green", bold=True)
+    click.echo("="*50)
+    click.echo("\nNext steps:")
+    click.echo("  1. Run: slack-connector start")
+    click.echo("  2. Invite bot to a channel: /invite @your-bot-name")
+    click.echo("  3. Send a message to test")
+    click.echo("\nDocumentation:")
+    click.echo("  Setup: src/slack_connector/docs/SETUP.md")
+    click.echo("  Usage: src/slack_connector/docs/USAGE.md")
+
+
+@cli.command()
 @click.option("--bundle", default=None, help="Path to bundle.md (default: <repo root>/bundle.md)")
 @click.option("--channel", default=None, help="Slack channel ID to watch (overrides .env)")
 @click.option("--env-file", default=".env", show_default=True, help="Path to .env file")

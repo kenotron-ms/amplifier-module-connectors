@@ -7,5 +7,6 @@ across different chat platforms (Slack, Teams, etc.).
 
 from .models import UnifiedMessage
 from .protocols import PlatformAdapter, ApprovalPrompt
+from .session_manager import SessionManager
 
-__all__ = ["UnifiedMessage", "PlatformAdapter", "ApprovalPrompt"]
+__all__ = ["UnifiedMessage", "PlatformAdapter", "ApprovalPrompt", "SessionManager"]

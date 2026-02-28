@@ -133,12 +133,14 @@ class SlackDisplaySystem:
             logger.error(f"Could not display content in Slack: {e}")
 
 
-def _format_tool_args(args: dict[str, Any]) -> str:
+def _format_tool_args(args: dict[str, Any], tool_name: str = "") -> str:
     """
     Format tool arguments in a concise, readable way.
     
     Inspired by Claude Code - show just enough to give confidence,
     not overwhelming JSON dumps.
+    
+    Special handling for bash: don't truncate the command argument.
     """
     if not args:
         return ""
@@ -156,8 +158,11 @@ def _format_tool_args(args: dict[str, Any]) -> str:
         
         # Format value concisely
         if isinstance(value, str):
+            # Special case: bash command - don't truncate
+            if tool_name == "bash" and key == "command":
+                value_str = f'"{value}"'
             # Truncate long strings
-            if len(value) > 50:
+            elif len(value) > 50:
                 value_str = f'"{value[:47]}..."'
             else:
                 value_str = f'"{value}"'
@@ -332,7 +337,7 @@ class SlackStreamingHook:
         args = data.get("tool_input", {})
         
         # Format args concisely (Claude Code style)
-        args_str = _format_tool_args(args) if args else ""
+        args_str = _format_tool_args(args, tool_name) if args else ""
         
         # Build the message - concise, single line
         if args_str:
@@ -364,7 +369,7 @@ class SlackStreamingHook:
         
         # Extract arguments from tool_input (same as in _post_tool_message)
         args = data.get("tool_input", {})
-        args_str = _format_tool_args(args) if args else ""
+        args_str = _format_tool_args(args, tool_name) if args else ""
         
         # Check for errors in result - try multiple possible keys
         result = (
@@ -385,7 +390,26 @@ class SlackStreamingHook:
             # Success - show checkmark with result preview (first few lines)
             result_preview = ""
             if result:
-                result_str = str(result)
+                # Special handling for bash: parse JSON and extract stdout
+                if tool_name == "bash":
+                    import json
+                    try:
+                        if isinstance(result, str):
+                            result_obj = json.loads(result)
+                        else:
+                            result_obj = result
+                        
+                        # Extract stdout from the bash result
+                        stdout = result_obj.get("stdout", "")
+                        if stdout:
+                            result_str = stdout
+                        else:
+                            result_str = str(result)
+                    except (json.JSONDecodeError, AttributeError, TypeError):
+                        result_str = str(result)
+                else:
+                    result_str = str(result)
+                
                 # Show first 2-3 lines or ~150 chars
                 lines = result_str.split('\n')
                 preview_lines = lines[:3]

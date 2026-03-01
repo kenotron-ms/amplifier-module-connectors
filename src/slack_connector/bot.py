@@ -42,6 +42,7 @@ class SlackAmplifierBot:
         slack_bot_token: str,
         allowed_channel: str | None = None,
         streaming_mode: str = "single",  # "single" or "multi"
+        project_storage_path: str | None = None,
     ) -> None:
         self.bundle_path = bundle_path
         self.slack_app_token = slack_app_token
@@ -52,6 +53,15 @@ class SlackAmplifierBot:
         # Amplifier state - now managed by SessionManager
         self.session_manager = SessionManager(bundle_path)
         self._approval_systems: dict[str, Any] = {}  # conv_id -> SlackApprovalSystem
+
+        # Project management
+        from slack_connector.project_manager import ProjectManager
+        from slack_connector.config_manager import ConfigManager
+        from slack_connector.commands import AmplifierCommands
+        
+        self.project_manager = ProjectManager(storage_path=project_storage_path)
+        self.config_manager = ConfigManager()
+        self.commands = AmplifierCommands(self.config_manager, self.project_manager, self.session_manager)
 
         # Slack state
         self.bolt_app: AsyncApp | None = None
@@ -160,6 +170,16 @@ class SlackAmplifierBot:
         """Lazily create or retrieve the session and lock for a conversation."""
         conv_id = self._conversation_id(channel, thread_ts)
 
+        # Get project path for this thread (if associated)
+        thread_id = self._get_thread_id(channel, reply_ts)
+        project_path = self.project_manager.get_thread_project(thread_id)
+        
+        # IMPORTANT: Set working directory in SessionManager BEFORE creating session
+        # This ensures the session is created with the correct working directory
+        if project_path:
+            self.session_manager.set_working_dir(conv_id, project_path)
+            logger.debug(f"Set SessionManager working dir for {conv_id}: {project_path}")
+
         # Create approval system if needed (track for this conversation)
         if conv_id not in self._approval_systems:
             from slack_connector.bridge import SlackApprovalSystem
@@ -221,6 +241,11 @@ class SlackAmplifierBot:
             pass
 
         async with lock:
+            # IMPORTANT: Set working directory inside the lock to avoid race conditions
+            # between concurrent conversations
+            conv_id = self._conversation_id(channel, reply_ts)
+            self.session_manager.ensure_working_directory(conv_id)
+            
             from slack_connector.bridge import SlackStreamingHook
 
             # Progressive status updates: Show tool execution in real-time
@@ -415,6 +440,148 @@ class SlackAmplifierBot:
             approval_system = self._approval_systems.get(conv_id)
             if approval_system:
                 approval_system.resolve(action_id, approved)
+
+        @app.command("/amplifier")
+        async def cmd_amplifier(ack: Any, command: dict, client: Any) -> None:
+            """Handle /amplifier <project-name-or-path> command."""
+            await ack()
+            
+            channel = command.get("channel_id", "")
+            user = command.get("user_id", "")
+            text = command.get("text", "").strip()
+            trigger_id = command.get("trigger_id", "")
+            
+            if not text:
+                result = await self.commands.show_help()
+                await client.chat_postEphemeral(
+                    channel=channel,
+                    user=user,
+                    text=result["message"]
+                )
+                return
+            
+            # Start a thread to associate with the project (for commands that need it)
+            try:
+                # Post a message to create the thread
+                result = await client.chat_postMessage(
+                    channel=channel,
+                    text=f"<@{user}> started a new Amplifier session"
+                )
+                thread_ts = result["ts"]
+                thread_id = self._get_thread_id(channel, thread_ts)
+                
+                # Mark thread as active
+                self._active_threads.add(thread_id)
+                
+                # Handle the command
+                cmd_result = await self.commands.handle_command(
+                    text=text,
+                    thread_id=thread_id,
+                    channel=channel,
+                    user=user,
+                    client=client
+                )
+                
+                # Post result in the thread
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=cmd_result["message"]
+                )
+                    
+            except SlackApiError as e:
+                logger.error(f"Error handling amplifier command: {e}")
+                await client.chat_postEphemeral(
+                    channel=channel,
+                    user=user,
+                    text=f":x: Failed to execute command: {e.response.get('error', 'Unknown error')}"
+                )
+            except Exception as e:
+                logger.exception(f"Unexpected error in amplifier command: {e}")
+                await client.chat_postEphemeral(
+                    channel=channel,
+                    user=user,
+                    text=f":x: An error occurred: {e}"
+                )
+
+        @app.command("/amplifier-status")
+        async def cmd_amplifier_status(ack: Any, command: dict, client: Any) -> None:
+            """Handle /amplifier-status command."""
+            await ack()
+            
+            channel = command.get("channel_id", "")
+            user = command.get("user_id", "")
+            
+            # Get all active threads in this channel
+            active_threads = [
+                tid for tid in self._active_threads 
+                if tid.startswith(f"{channel}-")
+            ]
+            
+            if not active_threads:
+                await client.chat_postEphemeral(
+                    channel=channel,
+                    user=user,
+                    text=":information_source: No active Amplifier sessions in this channel."
+                )
+                return
+            
+            # Build status message
+            lines = [":clipboard: *Active Amplifier Sessions*\n"]
+            for thread_id in active_threads:
+                project_path = self.project_manager.get_thread_project(thread_id)
+                display_name = self.project_manager.get_thread_display_name(thread_id)
+                
+                if project_path:
+                    lines.append(f"• *{display_name}* - `{project_path}`")
+                else:
+                    lines.append(f"• Thread `{thread_id}` (no project associated)")
+            
+            await client.chat_postEphemeral(
+                channel=channel,
+                user=user,
+                text="\n".join(lines)
+            )
+
+        @app.command("/amplifier-list")
+        async def cmd_amplifier_list(ack: Any, command: dict, client: Any) -> None:
+            """Handle /amplifier-list command."""
+            await ack()
+            
+            channel = command.get("channel_id", "")
+            user = command.get("user_id", "")
+            
+            projects = self.project_manager.list_projects()
+            
+            if not projects:
+                await client.chat_postEphemeral(
+                    channel=channel,
+                    user=user,
+                    text=(
+                        ":information_source: No Amplifier projects found in `~/.amplifier/projects/`\n\n"
+                        "Projects appear here after you use them with Amplifier.\n\n"
+                        "To start a new project session:\n"
+                        "`/amplifier /path/to/project`\n\n"
+                        "Examples:\n"
+                        "• `/amplifier ~/workspace/my-app`\n"
+                        "• `/amplifier /Users/ken/projects/frontend`\n"
+                        "• `/amplifier .` (current directory)"
+                    )
+                )
+                return
+            
+            # Build project list
+            lines = [":file_folder: *Amplifier Projects*\n"]
+            for slug in projects:
+                lines.append(f"• `{slug}`")
+            
+            lines.append(f"\n_Found {len(projects)} project(s) in `~/.amplifier/projects/`_")
+            
+            await client.chat_postEphemeral(
+                channel=channel,
+                user=user,
+                text="\n".join(lines)
+            )
 
         @app.error
         async def on_error(error: Exception) -> None:

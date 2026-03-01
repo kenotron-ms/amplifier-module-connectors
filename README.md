@@ -4,7 +4,7 @@ Bridge chat platforms (Slack, Microsoft Teams) to [Amplifier](https://github.com
 
 **What it does:** Users send messages in Slack/Teams → Amplifier processes them with AI → responses posted back. Each conversation has persistent context.
 
-[![Tests](https://img.shields.io/badge/tests-37%2F37%20passing-brightgreen)](./tests/)
+[![Tests](https://img.shields.io/badge/tests-103%2F104%20passing-brightgreen)](./TESTING.md)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
@@ -13,17 +13,23 @@ Bridge chat platforms (Slack, Microsoft Teams) to [Amplifier](https://github.com
 ### Slack Connector
 
 ```bash
-# Install
+# 1. Create Slack app using manifest (automated)
+#    See: docs/slack-app-manifest.md
+#    Use: slack-app-manifest.yaml
+
+# 2. Install
 pip install -e .
 
-# Onboard (interactive setup verification)
+# 3. Onboard (interactive setup verification)
 slack-connector onboard
 
-# Run
+# 4. Run
 slack-connector start
 ```
 
-**Setup Guide:** [src/slack_connector/docs/SETUP.md](./src/slack_connector/docs/SETUP.md)
+**Setup Guides:**
+- [Slack App Manifest](./docs/slack-app-manifest.md) - Automated app configuration
+- [Slack Setup Guide](./docs/slack-setup.md) - Complete setup instructions
 
 ### Teams Connector
 
@@ -45,6 +51,7 @@ teams-connector start
 ### ✅ Slack Connector
 - **Socket Mode** - Real-time bidirectional communication
 - **Thread Support** - Each thread = separate conversation context
+- **Project Management** - Associate threads with project directories via slash commands
 - **Progressive Updates** - Show tool execution in real-time
 - **Approval Prompts** - Interactive Block Kit buttons
 - **Reactions** - Visual feedback (thinking, processing, done)
@@ -63,22 +70,27 @@ teams-connector start
 - `UnifiedMessage` - Platform-agnostic message model
 - `PlatformAdapter` - Protocol for platform implementations
 - `SessionManager` - Shared session management
-- **37/37 tests passing** - Comprehensive test coverage
+- `ProjectManager` - Thread → project associations (Slack)
+- **103/104 tests passing** - Comprehensive test coverage ([Testing Guide](./TESTING.md))
 
 ## 📊 Status
 
 | Component | Status | Tests | Notes |
 |-----------|--------|-------|-------|
 | **Core** | ✅ Complete | - | UnifiedMessage, PlatformAdapter, SessionManager |
-| **Slack** | ✅ Functional | 19/19 | Production ready |
+| **Slack** | ✅ Functional | 27/27 | Production ready + Project management |
 | **Teams** | ✅ Functional | 18/18 | Webhook server working |
 
 ## 📚 Documentation
 
+- **[Integration Guide](./docs/INTEGRATION_GUIDE.md)** - Using this module in your projects
+- **[Quick Integration Reference](./docs/QUICK_INTEGRATION.md)** - Fast setup snippets
 - **[Architecture Overview](./docs/architecture.md)** - System design and component interaction
 - **[Slack Setup Guide](./docs/slack-setup.md)** - Complete Slack configuration
+- **[Slack Project Management](./docs/slack-projects.md)** - Thread → project associations
 - **[Teams Setup Guide](./docs/teams-setup.md)** - Complete Teams configuration
 - **[Development Guide](./docs/development.md)** - Contributing and extending
+- **[Testing Guide](./TESTING.md)** - Running and writing tests
 - **[API Reference](./docs/api-reference.md)** - Code documentation
 
 ## 🏛️ Architecture

@@ -118,6 +118,11 @@ class TeamsAmplifierBot:
         
         # Prevent concurrent execution for same conversation
         async with lock:
+            # IMPORTANT: Set working directory inside the lock to avoid race conditions
+            if self.adapter:
+                conv_id = self.adapter.get_conversation_id(msg.channel, msg.thread_id)
+                self.session_manager.ensure_working_directory(conv_id)
+            
             try:
                 # Add "thinking" reaction
                 if self.adapter:

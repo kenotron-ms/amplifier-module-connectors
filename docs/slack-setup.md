@@ -10,7 +10,21 @@ Complete guide to setting up and running the Slack connector for Amplifier.
 
 ## Step 1: Create Slack App
 
-### 1.1 Create App
+### Option A: Using App Manifest (Recommended - Automated)
+
+**Easiest way** - All configuration automated:
+
+1. Go to https://api.slack.com/apps
+2. Click **Create New App** → **From an app manifest**
+3. Select your workspace
+4. Copy contents of `slack-app-manifest.yaml` from the repo
+5. Paste into the YAML editor
+6. Click **Next** → **Create**
+7. ✅ Done! Slash commands, scopes, and events are auto-configured
+
+**See:** [slack-app-manifest.md](./slack-app-manifest.md) for details.
+
+### Option B: Manual Setup (If manifest doesn't work)
 
 1. Go to https://api.slack.com/apps
 2. Click **Create New App** → **From scratch**
@@ -424,6 +438,7 @@ slack-connector [OPTIONS]
 
 ## Next Steps
 
+- **Set up projects** - See [Project Management](slack-projects.md) to associate threads with project directories
 - **Customize bundle** - Edit `bundle.md` to change AI behavior
 - **Add tools** - Install more Amplifier tool modules
 - **Monitor logs** - Use `./tail-logs.sh` for real-time monitoring

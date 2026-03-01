@@ -158,6 +158,17 @@ def _unwrap_tool_result(result: Any) -> Any:
         return result
 
 
+def _escape_code_block(text: str) -> str:
+    """
+    Escape content for safe display in Slack code blocks.
+    
+    Replaces triple backticks with a safe alternative to prevent
+    breaking out of code fence blocks.
+    """
+    # Replace ``` with `` ` (with space) to prevent breaking code fence
+    return text.replace("```", "`` `")
+
+
 def _format_tool_invocation(tool_name: str, args: dict[str, Any]) -> str:
     """
     Format tool invocation showing only what users care about.
@@ -632,15 +643,18 @@ class SlackStreamingHook:
             # Combine invocation and result
             # For results with newlines (like diffs), use code block
             if '\n' in result_str:
+                # Escape any triple backticks in the result to prevent breaking code fence
+                escaped_result = _escape_code_block(result_str)
+                
                 if tool_name == "edit_file":
                     # Edit file diffs - use diff syntax highlighting
-                    text = f"{invocation}\n```diff\n{result_str}\n```"
+                    text = f"{invocation}\n```diff\n{escaped_result}\n```"
                 elif tool_name == "bash":
-                    # Bash output - already formatted, just append
-                    text = f"{invocation}\n{result_str}"
+                    # Bash output - use code block for readability
+                    text = f"{invocation}\n```\n{escaped_result}\n```"
                 else:
                     # Other multi-line results - use plain code block
-                    text = f"{invocation}\n```\n{result_str}\n```"
+                    text = f"{invocation}\n```\n{escaped_result}\n```"
             else:
                 # Single-line results - just append
                 text = f"{invocation}\n{result_str}"

@@ -149,6 +149,7 @@ def start(bundle: str | None, channel: str | None, env_file: str, debug: bool, s
         slack_bot_token=bot_token,
         allowed_channel=allowed_channel,
         streaming_mode=streaming_mode,
+        project_storage_path=None,  # Use default: ~/.amplifier/slack-threads.json
     )
 
     async def run() -> None:

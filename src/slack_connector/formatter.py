@@ -4,11 +4,14 @@ Response formatting utilities for Slack messages.
 Handles:
 1. Filtering out thinking blocks and tool call artifacts
 2. Converting Markdown to Slack mrkdwn or Block Kit
-3. Splitting long responses into multiple messages
+3. Truncating long responses (especially file operations)
+4. Splitting long responses into multiple messages
 """
 import re
 import logging
 from typing import Any
+
+from slack_connector.response_truncator import smart_truncate
 
 logger = logging.getLogger(__name__)
 
@@ -115,13 +118,14 @@ def markdown_to_blocks(text: str) -> list[dict[str, Any]]:
     return blocks
 
 
-def format_for_slack(text: str, use_blocks: bool = False) -> dict[str, Any]:
+def format_for_slack(text: str, use_blocks: bool = False, truncate: bool = True) -> dict[str, Any]:
     """
     Prepare agent response for posting to Slack.
     
     Args:
         text: Raw agent response (may contain thinking blocks, Markdown, etc.)
         use_blocks: If True, return Block Kit blocks; if False, return mrkdwn text
+        truncate: If True, intelligently truncate long responses (default: True)
     
     Returns:
         Dictionary with 'text' (fallback) and optionally 'blocks' (rich display)
@@ -132,7 +136,11 @@ def format_for_slack(text: str, use_blocks: bool = False) -> dict[str, Any]:
     if not cleaned:
         return {"text": ""}
     
-    # Step 2: Convert Markdown to Slack format
+    # Step 2: Intelligently truncate if needed (especially for file operations)
+    if truncate:
+        cleaned = smart_truncate(cleaned)
+    
+    # Step 3: Convert Markdown to Slack format
     if use_blocks:
         # Full Block Kit (rich formatting)
         blocks = markdown_to_blocks(cleaned)

@@ -4,20 +4,7 @@ Quick reference for all management and utility scripts.
 
 ## Log Viewing
 
-### `logs.sh` - Simple Log Viewer
-**Quick and easy log tailing**
-
-```bash
-./logs.sh
-```
-
-Shows both stdout and stderr logs with live updates (tail -f).
-
-**Use when:** You just want to see what's happening
-
----
-
-### `tail-logs.sh` - Advanced Log Viewer
+### `tail-logs.sh` - Log Viewer
 **Powerful log viewer with filtering and colors**
 
 ```bash
@@ -260,8 +247,7 @@ slack-connector start --channel C0AJBKTR0JU --debug
 
 | Task | Command |
 |------|---------|
-| View logs | `./logs.sh` |
-| View logs with color | `./tail-logs.sh` |
+| View logs | `./tail-logs.sh` |
 | Show only errors | `./tail-logs.sh -e` |
 | Filter logs | `./tail-logs.sh --grep "pattern"` |
 | Restart daemon | `./restart-daemon.sh` |

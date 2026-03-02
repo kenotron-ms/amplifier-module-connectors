@@ -44,6 +44,7 @@ class TestSessionManagerInit:
         assert sm.default_bundle_path == "./bundle.md"
         assert sm.prepared_bundles == {}
         assert sm.session_projects == {}
+        assert sm.session_bundles == {}
         assert sm._initialized is False
         assert sm.sessions == {}
         assert sm.locks == {}
@@ -162,7 +163,7 @@ class TestGetOrCreateSession:
         sm = SessionManager("./bundle.md")
         mock_session = _make_mock_session()
         mock_prepared = _make_mock_prepared(mock_session)
-        self._pre_populate(sm, mock_prepared)
+        resolved = self._pre_populate(sm, mock_prepared)
 
         session, lock = await sm.get_or_create_session(
             conversation_id="conv-1",
@@ -174,6 +175,7 @@ class TestGetOrCreateSession:
         assert "conv-1" in sm.sessions
         assert "conv-1" in sm.locks
         assert sm.session_projects["conv-1"] is None
+        assert sm.session_bundles["conv-1"] == resolved
 
     @pytest.mark.asyncio
     async def test_caches_session(self):
@@ -228,24 +230,51 @@ class TestGetOrCreateSession:
 
     @pytest.mark.asyncio
     async def test_project_change_recreates_session(self):
-        """Changing project_path for an existing session closes old and creates new."""
+        """When a project with its own bundle.md is opened, the bundle changes → session recreated."""
         sm = SessionManager("./bundle.md")
         old_session = _make_mock_session()
         new_session = _make_mock_session()
-        mock_prepared = Mock()
-        mock_prepared.create_session = AsyncMock(side_effect=[old_session, new_session])
+
+        default_resolved = str(Path("./bundle.md").expanduser().resolve())
+        default_prepared = Mock()
+        default_prepared.create_session = AsyncMock(return_value=old_session)
+        sm.prepared_bundles[default_resolved] = default_prepared
+        sm._initialized = True
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_bundle = Path(tmpdir) / "bundle.md"
+            project_bundle.write_text("# Project bundle")
+            project_resolved = str(project_bundle.resolve())
+
+            project_prepared = Mock()
+            project_prepared.create_session = AsyncMock(return_value=new_session)
+            sm.prepared_bundles[project_resolved] = project_prepared
+
+            # First: session with no project → uses default bundle
+            s1, _ = await sm.get_or_create_session("conv-1", Mock(), project_path=None)
+            assert s1 is old_session
+            assert sm.session_bundles["conv-1"] == default_resolved
+
+            # Second: project with its own bundle.md → bundle changes → session recreated
+            s2, _ = await sm.get_or_create_session("conv-1", Mock(), project_path=tmpdir)
+            assert s2 is new_session
+            old_session.close.assert_called_once()
+            assert sm.session_bundles["conv-1"] == project_resolved
+
+    @pytest.mark.asyncio
+    async def test_no_bundle_change_no_recreation(self):
+        """Two different projects that both fall back to the default bundle do NOT recreate."""
+        sm = SessionManager("./bundle.md")
+        mock_prepared = _make_mock_prepared()
         self._pre_populate(sm, mock_prepared)
 
-        # First: create session with no project (default bundle)
-        s1, _ = await sm.get_or_create_session("conv-1", Mock(), project_path=None)
-        assert s1 is old_session
-        assert sm.session_projects["conv-1"] is None
+        # /nonexistent-A has no bundle.md → default
+        s1, _ = await sm.get_or_create_session("conv-1", Mock(), project_path="/nonexistent-A")
+        # /nonexistent-B has no bundle.md → also default → same bundle → NO recreation
+        s2, _ = await sm.get_or_create_session("conv-1", Mock(), project_path="/nonexistent-B")
 
-        # Second: same conv but different project → old session closed, new created
-        s2, _ = await sm.get_or_create_session("conv-1", Mock(), project_path="/new/project")
-        assert s2 is new_session
-        old_session.close.assert_called_once()
-        assert sm.session_projects["conv-1"] == "/new/project"
+        assert s1 is s2
+        assert mock_prepared.create_session.call_count == 1
 
     @pytest.mark.asyncio
     async def test_same_project_no_recreation(self):
@@ -261,17 +290,26 @@ class TestGetOrCreateSession:
         assert mock_prepared.create_session.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_lock_preserved_across_project_change(self):
-        """The asyncio.Lock for a conversation is preserved when project changes."""
+    async def test_lock_preserved_across_bundle_change(self):
+        """The asyncio.Lock is preserved when the bundle changes (session recreated)."""
         sm = SessionManager("./bundle.md")
-        mock_prepared = Mock()
-        mock_prepared.create_session = AsyncMock(
-            side_effect=[_make_mock_session(), _make_mock_session()]
-        )
-        self._pre_populate(sm, mock_prepared)
 
-        _, lock1 = await sm.get_or_create_session("conv-1", Mock(), project_path=None)
-        _, lock2 = await sm.get_or_create_session("conv-1", Mock(), project_path="/project")
+        default_resolved = str(Path("./bundle.md").expanduser().resolve())
+        default_prepared = Mock()
+        default_prepared.create_session = AsyncMock(return_value=_make_mock_session())
+        sm.prepared_bundles[default_resolved] = default_prepared
+        sm._initialized = True
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "bundle.md").write_text("# Project")
+            project_resolved = str((Path(tmpdir) / "bundle.md").resolve())
+
+            project_prepared = Mock()
+            project_prepared.create_session = AsyncMock(return_value=_make_mock_session())
+            sm.prepared_bundles[project_resolved] = project_prepared
+
+            _, lock1 = await sm.get_or_create_session("conv-1", Mock(), project_path=None)
+            _, lock2 = await sm.get_or_create_session("conv-1", Mock(), project_path=tmpdir)
 
         # Same lock object — preserved across session recreation
         assert lock1 is lock2
@@ -366,16 +404,18 @@ class TestCloseAll:
 
     @pytest.mark.asyncio
     async def test_close_all_clears_new_state(self):
-        """close_all clears session_projects and prepared_bundles."""
+        """close_all clears session_projects, session_bundles, and prepared_bundles."""
         sm = SessionManager("./bundle.md")
         sm.sessions = {"conv-1": _make_mock_session()}
         sm.locks = {"conv-1": asyncio.Lock()}
         sm.session_projects = {"conv-1": "/some/project"}
+        sm.session_bundles = {"conv-1": "/some/project/bundle.md"}
         sm.prepared_bundles = {"/resolved/bundle.md": Mock()}
         sm._initialized = True
 
         await sm.close_all()
 
         assert sm.session_projects == {}
+        assert sm.session_bundles == {}
         assert sm.prepared_bundles == {}
         assert sm._initialized is False

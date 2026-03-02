@@ -55,6 +55,7 @@ class SessionManager:
         self.sessions: dict[str, Any] = {}  # conversation_id -> AmplifierSession
         self.locks: dict[str, asyncio.Lock] = {}  # conversation_id -> Lock
         self.session_projects: dict[str, Optional[str]] = {}  # conversation_id -> project_path
+        self.session_bundles: dict[str, str] = {}  # conversation_id -> resolved bundle path
 
         # Working directory tracking (per conversation)
         self.working_dirs: dict[str, str] = {}  # conversation_id -> working_dir
@@ -76,7 +77,10 @@ class SessionManager:
             candidate = Path(project_path).expanduser().resolve() / "bundle.md"
             if candidate.is_file():
                 return str(candidate)
-            logger.debug(f"No bundle.md in {project_path}, falling back to default bundle")
+            logger.warning(
+                f"No bundle.md in {project_path} — using default server bundle. "
+                f"Add a bundle.md to the project for its own agent/skills/hooks."
+            )
         return str(Path(self.default_bundle_path).expanduser().resolve())
 
     async def _get_or_create_prepared(self, project_path: Optional[str]) -> Any:
@@ -149,8 +153,9 @@ class SessionManager:
         """
         session = self.sessions.pop(conversation_id, None)
         self.session_projects.pop(conversation_id, None)
+        self.session_bundles.pop(conversation_id, None)
         # Keep self.locks[conversation_id] — reused by the replacement session
-        # Keep self.working_dirs[conversation_id] — persists across project changes
+        # Keep self.working_dirs[conversation_id] — persists across bundle changes
 
         if session is not None:
             try:
@@ -194,27 +199,37 @@ class SessionManager:
                 "SessionManager.initialize() must be called before creating sessions"
             )
 
-        # Detect project change → close old session so it gets recreated below
+        # Resolve the bundle for this project upfront — this is THE active bundle.
+        # Uses the project's own bundle.md if present, otherwise the server default.
+        active_bundle = self._resolve_bundle_path(project_path)
+
+        # Detect bundle change → close old session so it gets recreated with the right bundle.
+        # We compare the RESOLVED bundle path (not just the project directory) so that:
+        #   - adding bundle.md to an existing project triggers a new session
+        #   - switching between two projects that share the same bundle does not
         if conversation_id in self.sessions:
-            old_project = self.session_projects.get(conversation_id)
-            if old_project != project_path:
+            old_bundle = self.session_bundles.get(conversation_id)
+            if old_bundle != active_bundle:
                 logger.info(
-                    f"Project changed for {conversation_id}: "
-                    f"{old_project!r} → {project_path!r}. Recreating session."
+                    f"Bundle changed for {conversation_id}: "
+                    f"{old_bundle!r} → {active_bundle!r}. Recreating session."
                 )
                 await self._close_session(conversation_id)
 
         if conversation_id not in self.sessions:
-            logger.info(f"Creating new session: {conversation_id}")
+            logger.info(
+                f"Creating session {conversation_id} "
+                f"[bundle: {active_bundle}] [project: {project_path or '(default)'}]"
+            )
 
-            # Load the bundle for this project (lazy, cached by resolved path)
+            # Load (or retrieve cached) PreparedBundle for the active bundle path
             prepared = await self._get_or_create_prepared(project_path)
 
             # Working directory: explicit override > project path > default
             working_dir = self.working_dirs.get(
                 conversation_id, project_path or self.default_workdir
             )
-            logger.info(f"Creating session with working directory: {working_dir}")
+            logger.info(f"  working_dir: {working_dir}")
 
             # Create session using the project's prepared bundle
             session = await prepared.create_session(
@@ -290,9 +305,10 @@ class SessionManager:
             except Exception as e:
                 logger.warning(f"Could not register spawn capability: {e}")
 
-            # Cache session; create lock if not already present (preserved across project changes)
+            # Cache session; create lock if not already present (preserved across bundle changes)
             self.sessions[conversation_id] = session
             self.session_projects[conversation_id] = project_path
+            self.session_bundles[conversation_id] = active_bundle
             if conversation_id not in self.locks:
                 self.locks[conversation_id] = asyncio.Lock()
 
@@ -357,6 +373,7 @@ class SessionManager:
         self.locks.clear()
         self.working_dirs.clear()
         self.session_projects.clear()
+        self.session_bundles.clear()
         self.prepared_bundles.clear()
         self._initialized = False
         logger.info("All sessions closed")

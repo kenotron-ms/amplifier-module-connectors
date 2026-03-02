@@ -244,7 +244,11 @@ class SessionManager:
                     console=None,  # no CLI UI
                 )
             except Exception as e:
-                raise RuntimeError(f"Failed to prepare bundle '{bundle_name}': {e}") from e
+                # resolve_bundle_config already provides detailed error messages
+                # Just re-raise with context about which project failed
+                context = f"project: {project_path}" if project_path else "default bundle"
+                logger.error(f"Bundle preparation failed ({context}): {e}")
+                raise  # Re-raise original exception with its detailed message
 
             self.prepared_bundles[cache_key] = prepared
             logger.info(f"Bundle '{bundle_name}' prepared successfully")

@@ -34,6 +34,11 @@ tools:
     source: ./modules/tool-slack-reply
   - module: tool-todo-list
     source: ./modules/tool-todo-list
+  - module: tool-delegate
+    source: git+https://github.com/microsoft/amplifier-foundation@main#subdirectory=modules/tool-delegate
+    config:
+      settings:
+        exclude_tools: [tool-delegate]
   - module: tool-web
     source: git+https://github.com/microsoft/amplifier-module-tool-web@main
   - module: tool-search
@@ -80,6 +85,7 @@ You have access to:
 - `slack_reply` — post messages to this Slack conversation
 - `todo_list` — manage a todo list within this conversation (add, list, complete, delete tasks)
 - `project_manager` — manage working directories and create projects
+- `delegate` — delegate work to specialized sub-agents
 - `web` — browse websites and fetch web content
 - `search` — search the web
 - `bash` — run shell commands
@@ -134,3 +140,29 @@ You: Use project_manager.list_projects("~/workspace")
 User: "Where am I working?"
 You: Use project_manager.get_current_directory()
 ```
+
+## The `delegate` Tool - Agent Delegation
+
+Use `delegate` to spawn focused sub-agents for specialized work. Sub-agents run in isolated sessions and return their results to you.
+
+### When to Delegate
+
+Delegate when you need:
+- Focused work on a specific sub-task with a clean context
+- Parallel work that doesn't need to be sequential
+- A specialist persona for a particular domain
+
+### How to Delegate
+
+```
+delegate(
+    agent="<agent-name>",
+    instruction="<what the sub-agent should do>",
+    context_depth="none"  # Optional: how much parent context to pass
+)
+```
+
+**Key principles:**
+- Give clear, self-contained instructions (the sub-agent starts fresh)
+- Use `context_depth="recent"` if the sub-agent needs conversation history
+- Synthesize the sub-agent's result into your final response

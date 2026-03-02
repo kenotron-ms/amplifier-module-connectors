@@ -9,4 +9,9 @@ from .models import UnifiedMessage
 from .protocols import PlatformAdapter, ApprovalPrompt
 from .session_manager import SessionManager
 
-__all__ = ["UnifiedMessage", "PlatformAdapter", "ApprovalPrompt", "SessionManager"]
+__all__ = [
+    "UnifiedMessage",
+    "PlatformAdapter",
+    "ApprovalPrompt",
+    "SessionManager",
+]

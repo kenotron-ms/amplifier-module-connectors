@@ -14,10 +14,10 @@ from typing import Any, Optional
 class UnifiedMessage:
     """
     Platform-agnostic message representation.
-    
+
     This model abstracts away platform-specific message formats into a
     common structure that can be used by the core bot logic.
-    
+
     Attributes:
         platform: Platform identifier (e.g., "slack", "teams")
         channel_id: Platform-specific channel/conversation identifier
@@ -27,7 +27,7 @@ class UnifiedMessage:
         thread_id: Optional thread/reply identifier (None for top-level messages)
         timestamp: When the message was sent
         raw_event: Original platform event for platform-specific handling
-    
+
     Examples:
         >>> # Slack message
         >>> msg = UnifiedMessage(
@@ -40,7 +40,7 @@ class UnifiedMessage:
         ...     timestamp=datetime.now(),
         ...     raw_event={"type": "message", ...}
         ... )
-        
+
         >>> # Teams message in a thread
         >>> msg = UnifiedMessage(
         ...     platform="teams",
@@ -53,7 +53,7 @@ class UnifiedMessage:
         ...     raw_event={"type": "message", ...}
         ... )
     """
-    
+
     platform: str
     channel_id: str
     user_id: str
@@ -62,21 +62,21 @@ class UnifiedMessage:
     thread_id: Optional[str]
     timestamp: datetime
     raw_event: dict[str, Any]
-    
+
     def get_conversation_id(self) -> str:
         """
         Generate a stable conversation identifier.
-        
+
         This is used for session management - messages in the same conversation
         (channel + thread) should map to the same Amplifier session.
-        
+
         Returns:
             Stable conversation ID string
         """
         if self.thread_id:
             return f"{self.platform}-{self.channel_id}-{self.thread_id}"
         return f"{self.platform}-{self.channel_id}"
-    
+
     def is_threaded(self) -> bool:
         """Check if this message is part of a thread."""
         return self.thread_id is not None

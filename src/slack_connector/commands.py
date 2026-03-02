@@ -146,7 +146,7 @@ class AmplifierCommands:
                     ["git", "add", "."], cwd=str(project_path), capture_output=True, check=True
                 )
                 subprocess.run(
-                    ["git", "commit", "-m", "Initial commit from amplifier-template"],
+                    ["git", "commit", "-m", "Initial commit from canvas-project-template"],
                     cwd=str(project_path),
                     capture_output=True,
                     check=True,

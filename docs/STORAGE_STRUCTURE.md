@@ -48,7 +48,7 @@ Slack connector workspace configuration:
 ```json
 {
   "workspace": "~/workspace",
-  "template_repo": "kenotron-ms/amplifier-template",
+  "template_repo": "kenotron-ms/canvas-project-template",
   "auto_init_git": true,
   "auto_switch": true
 }

@@ -23,7 +23,7 @@ Create a new project from the Amplifier template.
 ```
 
 **What it does:**
-1. Clones `kenotron-ms/amplifier-template` from GitHub
+1. Clones `kenotron-ms/canvas-project-template` from GitHub
 2. Creates project in `~/workspace/<name>` (configurable)
 3. Removes original git history
 4. Re-initializes git with fresh commit
@@ -124,7 +124,7 @@ Show all configuration settings.
 ⚙️ Amplifier Configuration
 
 • `workspace`: `~/workspace`
-• `template_repo`: `kenotron-ms/amplifier-template`
+• `template_repo`: `kenotron-ms/canvas-project-template`
 • `auto_init_git`: `True`
 • `auto_switch`: `True`
 ```
@@ -158,7 +158,7 @@ Update a configuration setting.
 
 **Available settings:**
 - `workspace` - Base directory for projects (default: `~/workspace`)
-- `template_repo` - GitHub repo for new projects (default: `kenotron-ms/amplifier-template`)
+- `template_repo` - GitHub repo for new projects (default: `kenotron-ms/canvas-project-template`)
 - `auto_init_git` - Initialize git for new projects (default: `true`)
 - `auto_switch` - Auto-switch to project after creation (default: `true`)
 
@@ -182,7 +182,7 @@ Configuration is stored in `~/.amplifier/workspaces/config.json` (separate from 
 ```json
 {
   "workspace": "~/workspace",
-  "template_repo": "kenotron-ms/amplifier-template",
+  "template_repo": "kenotron-ms/canvas-project-template",
   "auto_init_git": true,
   "auto_switch": true
 }
@@ -275,10 +275,10 @@ Thread associations are stored in `~/.amplifier/workspaces/thread-associations.j
 
 ## Template Structure
 
-The default template (`kenotron-ms/amplifier-template`) includes:
+The default template (`kenotron-ms/canvas-project-template`) includes:
 
 ```
-amplifier-template/
+canvas-project-template/
 ├── .amplifier/
 │   ├── bundle.md       # Amplifier behaviors
 │   └── settings.yaml   # Amplifier settings

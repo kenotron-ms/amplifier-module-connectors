@@ -22,7 +22,7 @@ class ConfigManager:
     
     Configuration is stored in ~/.amplifier/workspaces/config.json and includes:
     - workspace: Base directory for projects (default: ~/workspace)
-    - template_repo: GitHub repo for new projects (default: kenotron-ms/amplifier-template)
+    - template_repo: GitHub repo for new projects (default: kenotron-ms/canvas-project-template)
     - auto_init_git: Whether to initialize git for new projects (default: True)
     - auto_switch: Whether to auto-switch to project after creation (default: True)
     
@@ -31,7 +31,7 @@ class ConfigManager:
     
     DEFAULT_CONFIG = {
         "workspace": "~/workspace",
-        "template_repo": "kenotron-ms/amplifier-template",
+        "template_repo": "kenotron-ms/canvas-project-template",
         "auto_init_git": True,
         "auto_switch": True,
     }
@@ -137,6 +137,6 @@ class ConfigManager:
         Get the template repository.
         
         Returns:
-            Template repo (e.g., "kenotron-ms/amplifier-template")
+            Template repo (e.g., "kenotron-ms/canvas-project-template")
         """
-        return self._config.get("template_repo", "kenotron-ms/amplifier-template")
+        return self._config.get("template_repo", "kenotron-ms/canvas-project-template")

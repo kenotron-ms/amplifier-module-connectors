@@ -2,9 +2,9 @@
 Session management for Amplifier connectors.
 
 Manages the lifecycle of Amplifier sessions across different chat platforms.
-Bundles are project-scoped: each project directory can define its own bundle.md
-that controls the agent persona, skills, hooks, and tools for that project.
-The default bundle (server project) is used when no project-specific bundle exists.
+Bundle resolution uses the same machinery as the Amplifier CLI (amplifier_app_cli):
+the "foundation" bundle is always the fallback, project settings are respected,
+and providers are injected from ~/.amplifier/settings.yaml automatically.
 """
 
 import asyncio
@@ -16,27 +16,24 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-def _deep_merge(base: dict, overlay: dict) -> dict:
-    """Recursively merge overlay into base (overlay wins on conflicts)."""
-    result = base.copy()
-    for k, v in overlay.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
-
-
 class SessionManager:
     """
     Platform-agnostic session manager for Amplifier.
 
-    Bundles are project-scoped: each project directory can have its own bundle.md
-    defining the agent, skills, and hooks for work in that project. Sessions are
-    automatically recreated when a thread switches to a different project.
+    Bundle resolution mirrors `amplifier run` exactly:
+      1. bundle.active from the project's .amplifier/settings[.local].yaml
+      2. bundle.active from ~/.amplifier/settings.yaml (global)
+      3. "foundation" (hardcoded CLI default)
+
+    Provider configuration is always injected from ~/.amplifier/settings.yaml
+    by the CLI's own resolve_bundle_config() machinery — no hand-rolled YAML
+    reading for providers.
+
+    Sessions are automatically recreated when a thread switches to a project
+    whose active bundle name differs from the current session's bundle name.
 
     Usage:
-        manager = SessionManager("./bundle.md")
+        manager = SessionManager()
         await manager.initialize()
         session, lock = await manager.get_or_create_session(
             conversation_id="slack-C123ABC",
@@ -45,20 +42,24 @@ class SessionManager:
         )
     """
 
-    def __init__(self, default_bundle_path: str, default_workdir: Optional[str] = None):
+    def __init__(self, default_bundle_path: str = "", default_workdir: Optional[str] = None):
         """
         Initialize session manager.
 
         Args:
-            default_bundle_path: Path to the default (server project) bundle.md.
-                Used when a project has no bundle.md of its own.
-            default_workdir: Default working directory for new sessions (default: current dir)
+            default_bundle_path: Accepted for backward compatibility but no longer used.
+                Bundle resolution now always uses the CLI's waterfall (project settings
+                → global settings → "foundation"). Callers may pass any string; it is
+                stored but ignored for bundle loading.
+            default_workdir: Default working directory for new sessions (default: cwd)
         """
-        self.default_bundle_path = default_bundle_path
+        self.default_bundle_path = default_bundle_path  # kept for backward compat
         self.default_workdir = default_workdir or os.getcwd()
 
-        # Bundle cache: resolved bundle file path -> PreparedBundle
-        self.prepared_bundles: dict[str, Any] = {}
+        # Bundle cache: (bundle_name, project_path) -> PreparedBundle
+        # Keyed by (name, path) so different projects with the same bundle name
+        # get their own PreparedBundle (which carries project-scoped tool overrides).
+        self.prepared_bundles: dict[tuple[str, Optional[str]], Any] = {}
         self._bundle_lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
 
@@ -66,152 +67,206 @@ class SessionManager:
         self.sessions: dict[str, Any] = {}  # conversation_id -> AmplifierSession
         self.locks: dict[str, asyncio.Lock] = {}  # conversation_id -> Lock
         self.session_projects: dict[str, Optional[str]] = {}  # conversation_id -> project_path
-        self.session_bundles: dict[str, str] = {}  # conversation_id -> resolved bundle path
+        self.session_bundles: dict[str, str] = {}  # conversation_id -> bundle name
 
         # Working directory tracking (per conversation)
         self.working_dirs: dict[str, str] = {}  # conversation_id -> working_dir
 
-    def _resolve_bundle_path(self, project_path: Optional[str]) -> str:
-        """
-        Resolve the bundle file path for a project.
+    # ------------------------------------------------------------------
+    # Bundle resolution helpers
+    # ------------------------------------------------------------------
 
-        Resolution order (first match wins):
-          1. .amplifier/settings.yaml (+ settings.local.yaml override) — standard
-             amplifier project config: bundle.active → bundle.added[name] → URI
-          2. bundle.md in the project root — simple / legacy fallback
-          3. Default server bundle — used when the project has no bundle config
+    def _get_bundle_name(self, project_path: Optional[str]) -> str:
+        """Resolve bundle name using the CLI's waterfall.
+
+        Priority (first match wins):
+          1. bundle.active in project's .amplifier/settings[.local].yaml
+          2. bundle.active in ~/.amplifier/settings.yaml (global default)
+          3. "foundation" — hardcoded fallback (same as `amplifier run`)
 
         Args:
-            project_path: Absolute path to the project directory, or None for default.
+            project_path: Absolute path to the project directory, or None.
 
         Returns:
-            Absolute path to the resolved bundle.md file to use.
+            Bundle name string, e.g. "foundation" or "my-agent".
         """
-        if project_path is None:
-            return str(Path(self.default_bundle_path).expanduser().resolve())
+        try:
+            from amplifier_app_cli.lib.settings import AppSettings, SettingsPaths  # type: ignore[import]
 
-        project_dir = Path(project_path).expanduser().resolve()
-
-        # --- 1. Read .amplifier/settings.yaml (project + local override) ---
-        uri = self._read_active_bundle_uri(project_dir)
-        if uri is not None:
-            # Relative URIs are resolved relative to the project directory
-            if uri.startswith("./") or uri.startswith("../"):
-                resolved = str((project_dir / uri).resolve())
+            if project_path is not None:
+                project_dir = Path(project_path).expanduser().resolve()
+                paths = SettingsPaths(
+                    global_settings=Path.home() / ".amplifier" / "settings.yaml",
+                    project_settings=project_dir / ".amplifier" / "settings.yaml",
+                    local_settings=project_dir / ".amplifier" / "settings.local.yaml",
+                )
+                app_settings = AppSettings(paths)
             else:
-                resolved = uri
-            if Path(resolved).is_file():
-                logger.debug(f"Resolved bundle from settings.yaml: {resolved}")
-                return resolved
+                # No specific project — read global settings only (connector CWD
+                # typically has no .amplifier dir, so project scope is a no-op).
+                app_settings = AppSettings()
+
+            bundle = app_settings.get_active_bundle()
+            if bundle:
+                logger.debug(
+                    f"Resolved bundle '{bundle}' from settings "
+                    f"(project: {project_path or '(default)'})"
+                )
+                return bundle
+
+        except ImportError:
             logger.warning(
-                f"settings.yaml active bundle URI {uri!r} resolved to {resolved!r} "
-                f"but file does not exist — falling back."
+                "amplifier_app_cli is not importable; falling back to 'foundation' bundle. "
+                "Ensure you are running within the amplifier uv environment."
             )
+        except Exception as e:
+            logger.warning(f"Could not read bundle settings: {e}; falling back to 'foundation'")
 
-        # --- 2. bundle.md in project root ---
-        root_bundle = project_dir / "bundle.md"
-        if root_bundle.is_file():
-            logger.debug(f"Resolved bundle from project root: {root_bundle}")
-            return str(root_bundle)
+        return "foundation"
 
-        # --- 3. Default server bundle ---
-        logger.warning(
-            f"No bundle found for {project_path} "
-            f"(checked .amplifier/settings.yaml and bundle.md) — "
-            f"using default server bundle. Add a bundle to the project for its own "
-            f"agent/skills/hooks."
-        )
-        return str(Path(self.default_bundle_path).expanduser().resolve())
+    async def _get_or_create_prepared(
+        self, project_path: Optional[str], bundle_name: Optional[str] = None
+    ) -> Any:
+        """Load and cache a PreparedBundle using the CLI's full bundle machinery.
 
-    def _read_active_bundle_uri(self, project_dir: Path) -> Optional[str]:
-        """
-        Read the active bundle URI from .amplifier/settings.yaml (and settings.local.yaml).
+        Delegates to ``resolve_bundle_config()`` from ``amplifier_app_cli``, which:
+          - Discovers the bundle URI (well-known bundles, user-added bundles)
+          - Downloads and installs modules from git sources
+          - Composes app-level behaviors (modes, notifications, etc.)
+          - Injects providers from ``~/.amplifier/settings.yaml``
+          - Applies tool and hook overrides from settings
+          - Expands environment variable references (``${API_KEY}``)
 
-        Replicates the amplifier-app-cli merge order for the project scope:
-          .amplifier/settings.yaml  (project, team-shared)
-          .amplifier/settings.local.yaml  (machine-local override, gitignored)
-
-        Returns the resolved URI string, or None if no active bundle is configured.
-        """
-        import yaml  # type: ignore[import]  # pyyaml — available as transitive dep of amplifier-foundation
-
-        settings: dict = {}
-        for settings_file in [
-            project_dir / ".amplifier" / "settings.yaml",
-            project_dir / ".amplifier" / "settings.local.yaml",
-        ]:
-            if settings_file.is_file():
-                try:
-                    with open(settings_file) as f:
-                        content = yaml.safe_load(f) or {}
-                    settings = _deep_merge(settings, content)
-                except Exception as e:
-                    logger.warning(f"Could not read {settings_file}: {e}")
-
-        bundle_section = settings.get("bundle") or {}
-        active_name = bundle_section.get("active")
-        added = bundle_section.get("added") or {}
-
-        if not active_name:
-            return None
-        if active_name not in added:
-            logger.warning(
-                f"settings.yaml declares active bundle {active_name!r} "
-                f"but it is not in bundle.added — available: {list(added)}"
-            )
-            return None
-
-        return added[active_name]
-
-    async def _get_or_create_prepared(self, project_path: Optional[str]) -> Any:
-        """
-        Load and cache a PreparedBundle for the given project path.
-
-        Uses double-check locking to safely handle concurrent first-time loads.
+        The result is a ``PreparedBundle`` whose ``create_session()`` will have
+        providers properly mounted — identical behavior to ``amplifier run``.
 
         Args:
             project_path: Project directory, or None for the default bundle.
+            bundle_name: Pre-resolved bundle name (avoids a second settings read when
+                the caller already resolved it via ``_get_bundle_name``).  If omitted,
+                ``_get_bundle_name(project_path)`` is called internally.
 
         Returns:
             PreparedBundle instance (cached after first load).
+
+        Raises:
+            RuntimeError: If amplifier_app_cli is not installed, or preparation fails.
         """
-        bundle_file = self._resolve_bundle_path(project_path)
+        if bundle_name is None:
+            bundle_name = self._get_bundle_name(project_path)
+        cache_key = (bundle_name, project_path)
 
         # Fast path: already cached
-        if bundle_file in self.prepared_bundles:
-            return self.prepared_bundles[bundle_file]
+        if cache_key in self.prepared_bundles:
+            return self.prepared_bundles[cache_key]
 
         # Slow path: load under lock (double-check after acquiring)
         async with self._bundle_lock:
-            if bundle_file in self.prepared_bundles:
-                return self.prepared_bundles[bundle_file]
+            if cache_key in self.prepared_bundles:
+                return self.prepared_bundles[cache_key]
 
-            logger.info(f"Loading Amplifier bundle: {bundle_file}")
+            logger.info(
+                f"Loading Amplifier bundle '{bundle_name}' (project: {project_path or '(default)'})"
+            )
+
             try:
-                from amplifier_foundation import load_bundle  # type: ignore[import]
-
-                bundle = await load_bundle(bundle_file)
-                prepared = await bundle.prepare()
-                self.prepared_bundles[bundle_file] = prepared
-                logger.info(f"Bundle prepared: {bundle_file}")
-                return prepared
+                from amplifier_app_cli.lib.settings import AppSettings, SettingsPaths  # type: ignore[import]
+                from amplifier_app_cli.runtime.config import resolve_bundle_config  # type: ignore[import]
             except ImportError as e:
                 raise RuntimeError(
-                    "amplifier-foundation not installed. Install with: uv pip install amplifier-foundation"
+                    "amplifier_app_cli is not installed or not accessible. "
+                    "This connector requires the Amplifier CLI. "
+                    "Ensure you are running within the amplifier uv environment "
+                    "(e.g. 'uv run slack-connector ...')."
                 ) from e
+
+            # Build AppSettings scoped to the project directory so that
+            # provider overrides, tool overrides, and notification behaviors
+            # are read from the right settings files.
+            if project_path is not None:
+                project_dir = Path(project_path).expanduser().resolve()
+                paths = SettingsPaths(
+                    global_settings=Path.home() / ".amplifier" / "settings.yaml",
+                    project_settings=project_dir / ".amplifier" / "settings.yaml",
+                    local_settings=project_dir / ".amplifier" / "settings.local.yaml",
+                )
+                app_settings = AppSettings(paths)
+            else:
+                app_settings = AppSettings()
+
+            # Determine what to pass to resolve_bundle_config.
+            #
+            # AppBundleDiscovery (inside resolve_bundle_config) uses Path.cwd()
+            # for its filesystem search paths.  Since the connector's CWD is not
+            # the project directory, it won't find project-local bundles on disk.
+            #
+            # Work-around: if the project's settings.yaml has a URI registered
+            # for the active bundle, pass that URI directly.  resolve_bundle_config
+            # (and the underlying load_and_prepare_bundle) accept both names and
+            # URIs — URIs skip filesystem discovery entirely.
+            load_target = bundle_name
+
+            if project_path is not None and bundle_name != "foundation":
+                try:
+                    added = app_settings.get_added_bundles()
+                    raw_uri = added.get(bundle_name)
+                    if raw_uri:
+                        if raw_uri.startswith(("git+", "file://", "http://", "https://", "zip+")):
+                            # Absolute URI — use directly
+                            load_target = raw_uri
+                            logger.debug(
+                                f"Using registered URI for bundle '{bundle_name}': {raw_uri}"
+                            )
+                        elif raw_uri.startswith(("./", "../")):
+                            # Relative path stored in project settings — resolve
+                            # relative to the project directory
+                            project_dir = Path(project_path).expanduser().resolve()
+                            resolved = (project_dir / raw_uri).resolve()
+                            load_target = f"file://{resolved}"
+                            logger.debug(
+                                f"Resolved relative bundle URI '{raw_uri}' → '{load_target}'"
+                            )
+                        else:
+                            # Treat as a bundle name for discovery (e.g. user-added global)
+                            load_target = raw_uri
+                except Exception as e:
+                    logger.debug(
+                        f"Could not resolve bundle URI from settings: {e}; "
+                        f"using name '{bundle_name}' for discovery"
+                    )
+
+            logger.debug(f"Calling resolve_bundle_config with load_target='{load_target}'")
+
+            try:
+                _, prepared = await resolve_bundle_config(
+                    bundle_name=load_target,
+                    app_settings=app_settings,
+                    console=None,  # no CLI UI
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to prepare bundle '{bundle_name}': {e}") from e
+
+            self.prepared_bundles[cache_key] = prepared
+            logger.info(f"Bundle '{bundle_name}' prepared successfully")
+            return prepared
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
         """
-        Pre-load the default (server project) bundle.
+        Pre-load the default bundle using the CLI's bundle resolution machinery.
 
-        This is an expensive one-time operation at startup. Additional project
-        bundles are loaded lazily on first use.
+        This is an expensive one-time operation at startup (downloads/installs
+        modules if needed).  Additional project bundles are loaded lazily on
+        first use.
 
         Raises:
-            RuntimeError: If amplifier-foundation is not installed
-            Exception: If bundle loading or preparation fails
+            RuntimeError: If amplifier_app_cli is not installed or accessible,
+                or if bundle loading/preparation fails.
         """
-        logger.info(f"Loading default Amplifier bundle: {self.default_bundle_path}")
+        logger.info("Pre-loading default Amplifier bundle...")
         try:
             await self._get_or_create_prepared(None)
             self._initialized = True
@@ -255,18 +310,19 @@ class SessionManager:
         """
         Get existing session or create a new one for a conversation.
 
-        Sessions are cached per conversation_id. If the project changes for an
-        existing session, the old session is closed and a new one is created
-        with the correct project bundle.
+        Sessions are cached per conversation_id. If the active bundle name
+        changes for an existing session (e.g. the project switched from
+        "foundation" to "my-agent"), the old session is closed and a new
+        one is created with the correct bundle.
 
         Args:
             conversation_id: Stable identifier for the conversation
             approval_system: Platform-specific approval system
-            project_path: Absolute path to the project directory. If the
-                directory contains bundle.md, that bundle is used. Otherwise
-                falls back to the default bundle. None = use default bundle.
-            display_system: Optional display system (None prevents duplicate messages)
-            platform_tool: Optional platform-specific tool to mount (e.g., slack_reply)
+            project_path: Absolute path to the project directory. The project's
+                .amplifier/settings.yaml is read to determine the active bundle.
+                None = use the global/default bundle.
+            display_system: Optional display system
+            platform_tool: Optional platform-specific tool to mount (e.g. slack_reply)
 
         Returns:
             Tuple of (session, lock) for the conversation
@@ -279,14 +335,14 @@ class SessionManager:
                 "SessionManager.initialize() must be called before creating sessions"
             )
 
-        # Resolve the bundle for this project upfront — this is THE active bundle.
-        # Uses the project's own bundle.md if present, otherwise the server default.
-        active_bundle = self._resolve_bundle_path(project_path)
+        # Resolve the active bundle NAME for this project — this is THE key used
+        # for change detection and session routing.
+        active_bundle = self._get_bundle_name(project_path)
 
-        # Detect bundle change → close old session so it gets recreated with the right bundle.
-        # We compare the RESOLVED bundle path (not just the project directory) so that:
-        #   - adding bundle.md to an existing project triggers a new session
-        #   - switching between two projects that share the same bundle does not
+        # Detect bundle change → close old session so it's recreated with the right bundle.
+        # We compare bundle NAMES (not file paths) so that:
+        #   - switching from "foundation" to "my-agent" triggers a new session
+        #   - two different projects both using "foundation" do NOT trigger recreation
         if conversation_id in self.sessions:
             old_bundle = self.session_bundles.get(conversation_id)
             if old_bundle != active_bundle:
@@ -302,8 +358,10 @@ class SessionManager:
                 f"[bundle: {active_bundle}] [project: {project_path or '(default)'}]"
             )
 
-            # Load (or retrieve cached) PreparedBundle for the active bundle path
-            prepared = await self._get_or_create_prepared(project_path)
+            # Load (or retrieve cached) PreparedBundle for the active bundle.
+            # Pass the already-resolved bundle_name so _get_or_create_prepared
+            # doesn't need to call _get_bundle_name a second time.
+            prepared = await self._get_or_create_prepared(project_path, bundle_name=active_bundle)
 
             # Working directory: explicit override > project path > default
             working_dir = self.working_dirs.get(

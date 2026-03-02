@@ -235,7 +235,27 @@ class SlackAmplifierBot:
         reply_ts = thread_ts or ts
 
         # Use reply_ts for session identification to ensure each thread has its own session
-        session, lock = await self._get_or_create_session(channel, reply_ts, reply_ts)
+        try:
+            session, lock = await self._get_or_create_session(channel, reply_ts, reply_ts)
+        except RuntimeError as e:
+            # Session creation failed - likely due to provider configuration
+            error_msg = str(e)
+            logger.error(f"Failed to create session: {error_msg}")
+            
+            # Post user-friendly error message
+            try:
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=reply_ts,
+                    text=(
+                        f":x: *Failed to create session*\n\n"
+                        f"```{error_msg}```\n\n"
+                        f"_Please contact your administrator to resolve this configuration issue._"
+                    ),
+                )
+            except SlackApiError:
+                pass
+            return
 
         # Show loading reaction
         try:

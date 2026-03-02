@@ -292,6 +292,60 @@ class AmplifierCommands:
         if not project_path.is_dir():
             return {"success": False, "message": f":x: Not a directory: `{project_path}`"}
 
+        # Validate that we can load this project's bundle before associating
+        # This catches configuration errors early with better error messages
+        try:
+            # Test bundle resolution without creating a full session
+            bundle_name = self.session_manager._get_bundle_name(str(project_path))
+            logger.debug(f"Project '{project_path.name}' will use bundle: {bundle_name}")
+            
+            # Optional: Validate provider configuration
+            try:
+                from amplifier_app_cli.lib.settings import AppSettings, SettingsPaths
+                from pathlib import Path as PathLib
+                
+                paths = SettingsPaths(
+                    global_settings=PathLib.home() / ".amplifier" / "settings.yaml",
+                    project_settings=project_path / ".amplifier" / "settings.yaml",
+                    local_settings=project_path / ".amplifier" / "settings.local.yaml",
+                )
+                app_settings = AppSettings(paths)
+                providers = app_settings.get_providers()
+                
+                if not providers:
+                    return {
+                        "success": False,
+                        "message": (
+                            f":x: *No providers configured*\n\n"
+                            f"Project: `{project_path}`\n\n"
+                            f"Please ensure `~/.amplifier/settings.yaml` contains provider configuration:\n"
+                            f"```\n"
+                            f"providers:\n"
+                            f"  anthropic:\n"
+                            f"    api_key: ${{ANTHROPIC_API_KEY}}\n"
+                            f"    default_model: claude-3-5-sonnet-20241022\n"
+                            f"```"
+                        ),
+                    }
+            except AttributeError:
+                # get_providers() not available - skip validation
+                logger.debug("Provider validation skipped (method not available)")
+            except Exception as e:
+                logger.warning(f"Could not validate providers: {e}")
+                # Continue anyway - let session creation handle it
+                
+        except Exception as e:
+            logger.error(f"Failed to validate project bundle: {e}")
+            return {
+                "success": False,
+                "message": (
+                    f":x: *Failed to validate project*\n\n"
+                    f"Project: `{project_path}`\n"
+                    f"Error: ```{str(e)[:500]}```\n\n"
+                    f"_Please check the project's `.amplifier/` configuration._"
+                ),
+            }
+
         # Associate thread with project — the next message in this thread will
         # load the project's bundle automatically via get_or_create_session.
         self.project_manager.associate_thread(thread_id, str(project_path))

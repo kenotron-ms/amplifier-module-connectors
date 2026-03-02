@@ -9,8 +9,8 @@ Implements subcommands for project management:
 - pwd: Show current directory
 - config: Manage configuration
 """
+
 import logging
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 
 class AmplifierCommands:
     """Handles /amplifier subcommands."""
-    
+
     def __init__(self, config_manager: Any, project_manager: Any, session_manager: Any):
         """
         Initialize command handler.
-        
+
         Args:
             config_manager: ConfigManager instance
             project_manager: ProjectManager instance
@@ -34,35 +34,30 @@ class AmplifierCommands:
         self.config = config_manager
         self.project_manager = project_manager
         self.session_manager = session_manager
-    
+
     async def handle_command(
-        self,
-        text: str,
-        thread_id: str,
-        channel: str,
-        user: str,
-        client: Any
+        self, text: str, thread_id: str, channel: str, user: str, client: Any
     ) -> dict[str, Any]:
         """
         Route command to appropriate handler.
-        
+
         Args:
             text: Command text (after /amplifier)
             thread_id: Thread identifier
             channel: Slack channel ID
             user: Slack user ID
             client: Slack client
-            
+
         Returns:
             Dict with 'success' bool and 'message' str
         """
         parts = text.split(maxsplit=1)
         if not parts:
             return await self.show_help()
-        
+
         subcommand = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
-        
+
         handlers = {
             "new": self.cmd_new,
             "fork": self.cmd_fork,
@@ -71,14 +66,14 @@ class AmplifierCommands:
             "pwd": self.cmd_pwd,
             "config": self.cmd_config,
         }
-        
+
         handler = handlers.get(subcommand)
         if handler:
             return await handler(args, thread_id, channel, user, client)
-        
+
         # If not a subcommand, treat as path (backward compatibility)
         return await self.cmd_open(text, thread_id, channel, user, client)
-    
+
     async def show_help(self) -> dict[str, Any]:
         """Show help message."""
         return {
@@ -99,89 +94,68 @@ class AmplifierCommands:
                 "*Other Commands:*\n"
                 "• `/amplifier-status` - Show active sessions\n"
                 "• `/amplifier-list` - List Amplifier projects"
-            )
+            ),
         }
-    
+
     async def cmd_new(
-        self,
-        args: str,
-        thread_id: str,
-        channel: str,
-        user: str,
-        client: Any
+        self, args: str, thread_id: str, channel: str, user: str, client: Any
     ) -> dict[str, Any]:
         """
         Create a new project from template.
-        
+
         Usage: /amplifier new <project-name>
         """
         if not args:
-            return {
-                "success": False,
-                "message": ":x: Usage: `/amplifier new <project-name>`"
-            }
-        
+            return {"success": False, "message": ":x: Usage: `/amplifier new <project-name>`"}
+
         project_name = args.strip()
         workspace = self.config.get_workspace_path()
         project_path = workspace / project_name
         template_repo = self.config.get_template_repo()
-        
+
         # Check if project already exists
         if project_path.exists():
-            return {
-                "success": False,
-                "message": f":x: Project already exists: `{project_path}`"
-            }
-        
+            return {"success": False, "message": f":x: Project already exists: `{project_path}`"}
+
         # Ensure workspace exists
         workspace.mkdir(parents=True, exist_ok=True)
-        
+
         try:
             # Clone template
             template_url = f"https://github.com/{template_repo}.git"
             logger.info(f"Cloning template from {template_url} to {project_path}")
-            
-            result = subprocess.run(
+
+            subprocess.run(
                 ["git", "clone", template_url, str(project_path)],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
-            
+
             # Remove .git directory (fresh start)
             git_dir = project_path / ".git"
             if git_dir.exists():
                 shutil.rmtree(git_dir)
-            
+
             # Re-initialize git if configured
             if self.config.get("auto_init_git", True):
                 subprocess.run(
-                    ["git", "init"],
-                    cwd=str(project_path),
-                    capture_output=True,
-                    check=True
+                    ["git", "init"], cwd=str(project_path), capture_output=True, check=True
                 )
                 subprocess.run(
-                    ["git", "add", "."],
-                    cwd=str(project_path),
-                    capture_output=True,
-                    check=True
+                    ["git", "add", "."], cwd=str(project_path), capture_output=True, check=True
                 )
                 subprocess.run(
                     ["git", "commit", "-m", "Initial commit from amplifier-template"],
                     cwd=str(project_path),
                     capture_output=True,
-                    check=True
+                    check=True,
                 )
-            
-            # Associate thread with project
+
+            # Associate thread with project — the next message in this thread will
+            # load the project's bundle automatically via get_or_create_session.
             self.project_manager.associate_thread(thread_id, str(project_path))
-            
-            # Update session working directory
-            # Convert thread_id to conversation_id (add "slack-" prefix)
-            conv_id = f"slack-{thread_id}"
-            self.session_manager.set_working_dir(conv_id, str(project_path))
-            
+
             return {
                 "success": True,
                 "message": (
@@ -190,43 +164,32 @@ class AmplifierCommands:
                     f"Template: `{template_repo}`\n"
                     f"Git initialized: {'Yes' if self.config.get('auto_init_git') else 'No'}\n\n"
                     "You can now ask me anything about this project!"
-                )
+                ),
             }
-            
+
         except subprocess.CalledProcessError as e:
             # Clean up on failure
             if project_path.exists():
                 shutil.rmtree(project_path)
-            
+
             error_msg = e.stderr if e.stderr else str(e)
             logger.error(f"Failed to create project: {error_msg}")
-            
-            return {
-                "success": False,
-                "message": f":x: Failed to create project: {error_msg}"
-            }
+
+            return {"success": False, "message": f":x: Failed to create project: {error_msg}"}
         except Exception as e:
             # Clean up on failure
             if project_path.exists():
                 shutil.rmtree(project_path)
-            
+
             logger.exception(f"Error creating project: {e}")
-            return {
-                "success": False,
-                "message": f":x: Error: {e}"
-            }
-    
+            return {"success": False, "message": f":x: Error: {e}"}
+
     async def cmd_fork(
-        self,
-        args: str,
-        thread_id: str,
-        channel: str,
-        user: str,
-        client: Any
+        self, args: str, thread_id: str, channel: str, user: str, client: Any
     ) -> dict[str, Any]:
         """
         Clone a GitHub repository.
-        
+
         Usage: /amplifier fork <github-url> [name]
         """
         if not args:
@@ -237,51 +200,44 @@ class AmplifierCommands:
                     "Examples:\n"
                     "• `/amplifier fork https://github.com/user/repo`\n"
                     "• `/amplifier fork https://github.com/user/repo my-project`"
-                )
+                ),
             }
-        
+
         parts = args.split(maxsplit=1)
         github_url = parts[0]
         custom_name = parts[1] if len(parts) > 1 else None
-        
+
         # Extract repo name from URL if no custom name provided
         if not custom_name:
             # Handle various GitHub URL formats
             repo_part = github_url.rstrip("/").split("/")[-1]
             custom_name = repo_part.replace(".git", "")
-        
+
         workspace = self.config.get_workspace_path()
         project_path = workspace / custom_name
-        
+
         # Check if project already exists
         if project_path.exists():
-            return {
-                "success": False,
-                "message": f":x: Project already exists: `{project_path}`"
-            }
-        
+            return {"success": False, "message": f":x: Project already exists: `{project_path}`"}
+
         # Ensure workspace exists
         workspace.mkdir(parents=True, exist_ok=True)
-        
+
         try:
             # Clone repository
             logger.info(f"Cloning {github_url} to {project_path}")
-            
-            result = subprocess.run(
+
+            subprocess.run(
                 ["git", "clone", github_url, str(project_path)],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
-            
-            # Associate thread with project
+
+            # Associate thread with project — the next message in this thread will
+            # load the project's bundle automatically via get_or_create_session.
             self.project_manager.associate_thread(thread_id, str(project_path))
-            
-            # Update session working directory
-            # Convert thread_id to conversation_id (add "slack-" prefix)
-            conv_id = f"slack-{thread_id}"
-            self.session_manager.set_working_dir(conv_id, str(project_path))
-            
+
             return {
                 "success": True,
                 "message": (
@@ -289,105 +245,76 @@ class AmplifierCommands:
                     f"`{project_path}`\n\n"
                     f"Source: `{github_url}`\n\n"
                     "You can now ask me anything about this project!"
-                )
+                ),
             }
-            
+
         except subprocess.CalledProcessError as e:
             # Clean up on failure
             if project_path.exists():
                 shutil.rmtree(project_path)
-            
+
             error_msg = e.stderr if e.stderr else str(e)
             logger.error(f"Failed to clone repository: {error_msg}")
-            
-            return {
-                "success": False,
-                "message": f":x: Failed to clone repository: {error_msg}"
-            }
+
+            return {"success": False, "message": f":x: Failed to clone repository: {error_msg}"}
         except Exception as e:
             # Clean up on failure
             if project_path.exists():
                 shutil.rmtree(project_path)
-            
+
             logger.exception(f"Error cloning repository: {e}")
-            return {
-                "success": False,
-                "message": f":x: Error: {e}"
-            }
-    
+            return {"success": False, "message": f":x: Error: {e}"}
+
     async def cmd_open(
-        self,
-        args: str,
-        thread_id: str,
-        channel: str,
-        user: str,
-        client: Any
+        self, args: str, thread_id: str, channel: str, user: str, client: Any
     ) -> dict[str, Any]:
         """
         Switch to an existing project.
-        
+
         Usage: /amplifier open <name-or-path>
         """
         if not args:
-            return {
-                "success": False,
-                "message": ":x: Usage: `/amplifier open <name-or-path>`"
-            }
-        
+            return {"success": False, "message": ":x: Usage: `/amplifier open <name-or-path>`"}
+
         path_str = args.strip()
-        
+
         # Try as workspace-relative name first
         workspace = self.config.get_workspace_path()
         project_path = workspace / path_str
-        
+
         # If not found in workspace, try as absolute/relative path
         if not project_path.exists():
             project_path = Path(path_str).expanduser().resolve()
-        
+
         if not project_path.exists():
-            return {
-                "success": False,
-                "message": f":x: Project not found: `{path_str}`"
-            }
-        
+            return {"success": False, "message": f":x: Project not found: `{path_str}`"}
+
         if not project_path.is_dir():
-            return {
-                "success": False,
-                "message": f":x: Not a directory: `{project_path}`"
-            }
-        
-        # Associate thread with project
+            return {"success": False, "message": f":x: Not a directory: `{project_path}`"}
+
+        # Associate thread with project — the next message in this thread will
+        # load the project's bundle automatically via get_or_create_session.
         self.project_manager.associate_thread(thread_id, str(project_path))
-        
-        # Update session working directory
-        # Convert thread_id to conversation_id (add "slack-" prefix)
-        conv_id = f"slack-{thread_id}"
-        self.session_manager.set_working_dir(conv_id, str(project_path))
-        
+
         return {
             "success": True,
             "message": (
                 f":white_check_mark: Switched to *{project_path.name}*\n"
                 f"`{project_path}`\n\n"
                 "You can now ask me anything about this project!"
-            )
+            ),
         }
-    
+
     async def cmd_list(
-        self,
-        args: str,
-        thread_id: str,
-        channel: str,
-        user: str,
-        client: Any
+        self, args: str, thread_id: str, channel: str, user: str, client: Any
     ) -> dict[str, Any]:
         """
         List projects in workspace.
-        
+
         Usage: /amplifier list
         """
         workspace = self.config.get_workspace_path()
-        
+
         if not workspace.exists():
             return {
                 "success": True,
@@ -395,16 +322,13 @@ class AmplifierCommands:
                     f":information_source: Workspace directory does not exist yet: `{workspace}`\n\n"
                     "Create your first project with:\n"
                     "`/amplifier new my-project`"
-                )
+                ),
             }
-        
+
         try:
             # List directories in workspace
-            projects = [
-                p for p in workspace.iterdir()
-                if p.is_dir() and not p.name.startswith(".")
-            ]
-            
+            projects = [p for p in workspace.iterdir() if p.is_dir() and not p.name.startswith(".")]
+
             if not projects:
                 return {
                     "success": True,
@@ -412,44 +336,33 @@ class AmplifierCommands:
                         f":information_source: No projects in workspace: `{workspace}`\n\n"
                         "Create your first project with:\n"
                         "`/amplifier new my-project`"
-                    )
+                    ),
                 }
-            
+
             # Build project list with git indicators
             lines = [f":file_folder: *Projects in `{workspace}`*\n"]
             for project in sorted(projects):
                 git_marker = " :link:" if (project / ".git").exists() else ""
                 lines.append(f"• {project.name}{git_marker}")
-            
+
             lines.append(f"\n_Found {len(projects)} project(s)_")
-            
-            return {
-                "success": True,
-                "message": "\n".join(lines)
-            }
-            
+
+            return {"success": True, "message": "\n".join(lines)}
+
         except Exception as e:
             logger.exception(f"Error listing projects: {e}")
-            return {
-                "success": False,
-                "message": f":x: Error listing projects: {e}"
-            }
-    
+            return {"success": False, "message": f":x: Error listing projects: {e}"}
+
     async def cmd_pwd(
-        self,
-        args: str,
-        thread_id: str,
-        channel: str,
-        user: str,
-        client: Any
+        self, args: str, thread_id: str, channel: str, user: str, client: Any
     ) -> dict[str, Any]:
         """
         Show current working directory for this thread.
-        
+
         Usage: /amplifier pwd
         """
         project_path = self.project_manager.get_thread_project(thread_id)
-        
+
         if not project_path:
             workspace = self.config.get_workspace_path()
             return {
@@ -461,30 +374,22 @@ class AmplifierCommands:
                     "• `/amplifier new <name>`\n"
                     "• `/amplifier fork <github-url>`\n"
                     "• `/amplifier open <name>`"
-                )
+                ),
             }
-        
+
         display_name = self.project_manager.get_thread_display_name(thread_id)
-        
+
         return {
             "success": True,
-            "message": (
-                f":file_folder: Current project: *{display_name}*\n"
-                f"`{project_path}`"
-            )
+            "message": (f":file_folder: Current project: *{display_name}*\n`{project_path}`"),
         }
-    
+
     async def cmd_config(
-        self,
-        args: str,
-        thread_id: str,
-        channel: str,
-        user: str,
-        client: Any
+        self, args: str, thread_id: str, channel: str, user: str, client: Any
     ) -> dict[str, Any]:
         """
         Manage configuration.
-        
+
         Usage:
           /amplifier config
           /amplifier config get <key>
@@ -497,76 +402,60 @@ class AmplifierCommands:
             lines = [":gear: *Amplifier Configuration*\n"]
             for key, value in sorted(config.items()):
                 lines.append(f"• `{key}`: `{value}`")
-            
+
             lines.append("\n*Commands:*")
             lines.append("• `/amplifier config get <key>`")
             lines.append("• `/amplifier config set <key> <value>`")
             lines.append("• `/amplifier config reset`")
-            
-            return {
-                "success": True,
-                "message": "\n".join(lines)
-            }
-        
+
+            return {"success": True, "message": "\n".join(lines)}
+
         parts = args.split(maxsplit=2)
         action = parts[0].lower()
-        
+
         if action == "get":
             if len(parts) < 2:
-                return {
-                    "success": False,
-                    "message": ":x: Usage: `/amplifier config get <key>`"
-                }
-            
+                return {"success": False, "message": ":x: Usage: `/amplifier config get <key>`"}
+
             key = parts[1]
             value = self.config.get(key)
-            
+
             if value is None:
-                return {
-                    "success": False,
-                    "message": f":x: Unknown configuration key: `{key}`"
-                }
-            
-            return {
-                "success": True,
-                "message": f":gear: `{key}` = `{value}`"
-            }
-        
+                return {"success": False, "message": f":x: Unknown configuration key: `{key}`"}
+
+            return {"success": True, "message": f":gear: `{key}` = `{value}`"}
+
         elif action == "set":
             if len(parts) < 3:
                 return {
                     "success": False,
-                    "message": ":x: Usage: `/amplifier config set <key> <value>`"
+                    "message": ":x: Usage: `/amplifier config set <key> <value>`",
                 }
-            
+
             key = parts[1]
             value = parts[2]
-            
+
             # Parse boolean values
             if value.lower() in ("true", "yes", "1"):
                 value = True
             elif value.lower() in ("false", "no", "0"):
                 value = False
-            
+
             self.config.set(key, value)
-            
-            return {
-                "success": True,
-                "message": f":white_check_mark: Set `{key}` = `{value}`"
-            }
-        
+
+            return {"success": True, "message": f":white_check_mark: Set `{key}` = `{value}`"}
+
         elif action == "reset":
             self.config.reset()
             return {
                 "success": True,
-                "message": ":white_check_mark: Configuration reset to defaults"
+                "message": ":white_check_mark: Configuration reset to defaults",
             }
-        
+
         else:
             return {
                 "success": False,
                 "message": (
-                    f":x: Unknown config action: `{action}`\n\n"
-                    "Valid actions: `get`, `set`, `reset`"
-                )
+                    f":x: Unknown config action: `{action}`\n\nValid actions: `get`, `set`, `reset`"
+                ),
             }

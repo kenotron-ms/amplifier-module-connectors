@@ -16,6 +16,17 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge overlay into base (overlay wins on conflicts)."""
+    result = base.copy()
+    for k, v in overlay.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
 class SessionManager:
     """
     Platform-agnostic session manager for Amplifier.
@@ -64,24 +75,93 @@ class SessionManager:
         """
         Resolve the bundle file path for a project.
 
-        Checks for bundle.md in the project directory. Falls back to the
-        default (server project) bundle if not found.
+        Resolution order (first match wins):
+          1. .amplifier/settings.yaml (+ settings.local.yaml override) — standard
+             amplifier project config: bundle.active → bundle.added[name] → URI
+          2. bundle.md in the project root — simple / legacy fallback
+          3. Default server bundle — used when the project has no bundle config
 
         Args:
             project_path: Absolute path to the project directory, or None for default.
 
         Returns:
-            Absolute path to the bundle.md file to use.
+            Absolute path to the resolved bundle.md file to use.
         """
-        if project_path is not None:
-            candidate = Path(project_path).expanduser().resolve() / "bundle.md"
-            if candidate.is_file():
-                return str(candidate)
+        if project_path is None:
+            return str(Path(self.default_bundle_path).expanduser().resolve())
+
+        project_dir = Path(project_path).expanduser().resolve()
+
+        # --- 1. Read .amplifier/settings.yaml (project + local override) ---
+        uri = self._read_active_bundle_uri(project_dir)
+        if uri is not None:
+            # Relative URIs are resolved relative to the project directory
+            if uri.startswith("./") or uri.startswith("../"):
+                resolved = str((project_dir / uri).resolve())
+            else:
+                resolved = uri
+            if Path(resolved).is_file():
+                logger.debug(f"Resolved bundle from settings.yaml: {resolved}")
+                return resolved
             logger.warning(
-                f"No bundle.md in {project_path} — using default server bundle. "
-                f"Add a bundle.md to the project for its own agent/skills/hooks."
+                f"settings.yaml active bundle URI {uri!r} resolved to {resolved!r} "
+                f"but file does not exist — falling back."
             )
+
+        # --- 2. bundle.md in project root ---
+        root_bundle = project_dir / "bundle.md"
+        if root_bundle.is_file():
+            logger.debug(f"Resolved bundle from project root: {root_bundle}")
+            return str(root_bundle)
+
+        # --- 3. Default server bundle ---
+        logger.warning(
+            f"No bundle found for {project_path} "
+            f"(checked .amplifier/settings.yaml and bundle.md) — "
+            f"using default server bundle. Add a bundle to the project for its own "
+            f"agent/skills/hooks."
+        )
         return str(Path(self.default_bundle_path).expanduser().resolve())
+
+    def _read_active_bundle_uri(self, project_dir: Path) -> Optional[str]:
+        """
+        Read the active bundle URI from .amplifier/settings.yaml (and settings.local.yaml).
+
+        Replicates the amplifier-app-cli merge order for the project scope:
+          .amplifier/settings.yaml  (project, team-shared)
+          .amplifier/settings.local.yaml  (machine-local override, gitignored)
+
+        Returns the resolved URI string, or None if no active bundle is configured.
+        """
+        import yaml  # type: ignore[import]  # pyyaml — available as transitive dep of amplifier-foundation
+
+        settings: dict = {}
+        for settings_file in [
+            project_dir / ".amplifier" / "settings.yaml",
+            project_dir / ".amplifier" / "settings.local.yaml",
+        ]:
+            if settings_file.is_file():
+                try:
+                    with open(settings_file) as f:
+                        content = yaml.safe_load(f) or {}
+                    settings = _deep_merge(settings, content)
+                except Exception as e:
+                    logger.warning(f"Could not read {settings_file}: {e}")
+
+        bundle_section = settings.get("bundle") or {}
+        active_name = bundle_section.get("active")
+        added = bundle_section.get("added") or {}
+
+        if not active_name:
+            return None
+        if active_name not in added:
+            logger.warning(
+                f"settings.yaml declares active bundle {active_name!r} "
+                f"but it is not in bundle.added — available: {list(added)}"
+            )
+            return None
+
+        return added[active_name]
 
     async def _get_or_create_prepared(self, project_path: Optional[str]) -> Any:
         """

@@ -97,6 +97,97 @@ class TestBundleResolution:
             sm = SessionManager("./bundle.md")
             assert sm._resolve_bundle_path(dir1) != sm._resolve_bundle_path(dir2)
 
+    def test_resolve_settings_yaml_active_bundle(self):
+        """Project with .amplifier/settings.yaml uses the declared active bundle."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            amplifier_dir = project / ".amplifier"
+            amplifier_dir.mkdir()
+            bundles_dir = amplifier_dir / "bundles" / "my-agent"
+            bundles_dir.mkdir(parents=True)
+            bundle_file = bundles_dir / "bundle.md"
+            bundle_file.write_text("# Agent bundle")
+
+            settings = amplifier_dir / "settings.yaml"
+            settings.write_text(
+                "bundle:\n"
+                "  active: my-agent\n"
+                "  added:\n"
+                "    my-agent: ./.amplifier/bundles/my-agent/bundle.md\n"
+            )
+
+            sm = SessionManager("./bundle.md")
+            result = sm._resolve_bundle_path(tmpdir)
+
+            assert result == str(bundle_file.resolve())
+
+    def test_resolve_settings_local_yaml_overrides(self):
+        """settings.local.yaml overrides settings.yaml active bundle."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            amplifier_dir = project / ".amplifier"
+            amplifier_dir.mkdir()
+
+            # Base bundle (in settings.yaml)
+            base_bundle = amplifier_dir / "base-bundle.md"
+            base_bundle.write_text("# Base")
+
+            # Override bundle (in settings.local.yaml)
+            local_bundle = amplifier_dir / "local-bundle.md"
+            local_bundle.write_text("# Local")
+
+            (amplifier_dir / "settings.yaml").write_text(
+                "bundle:\n"
+                "  active: base\n"
+                "  added:\n"
+                "    base: ./.amplifier/base-bundle.md\n"
+                "    local-dev: ./.amplifier/local-bundle.md\n"
+            )
+            (amplifier_dir / "settings.local.yaml").write_text("bundle:\n  active: local-dev\n")
+
+            sm = SessionManager("./bundle.md")
+            result = sm._resolve_bundle_path(tmpdir)
+
+            assert result == str(local_bundle.resolve())
+
+    def test_resolve_settings_yaml_missing_active_falls_back(self):
+        """settings.yaml with active name not in added falls back gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            amplifier_dir = Path(tmpdir) / ".amplifier"
+            amplifier_dir.mkdir()
+            (amplifier_dir / "settings.yaml").write_text(
+                "bundle:\n  active: nonexistent\n  added: {}\n"
+            )
+
+            sm = SessionManager("./bundle.md")
+            # Falls back to root bundle.md or default — no crash
+            result = sm._resolve_bundle_path(tmpdir)
+            assert result == str(Path("./bundle.md").expanduser().resolve())
+
+    def test_resolve_settings_yaml_takes_priority_over_root_bundle(self):
+        """settings.yaml active bundle wins over a root bundle.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            # Root bundle.md exists
+            root_bundle = project / "bundle.md"
+            root_bundle.write_text("# Root bundle")
+
+            # settings.yaml points to a different bundle
+            amplifier_dir = project / ".amplifier"
+            amplifier_dir.mkdir()
+            agent_bundle = amplifier_dir / "agent.md"
+            agent_bundle.write_text("# Agent bundle")
+            (amplifier_dir / "settings.yaml").write_text(
+                "bundle:\n  active: agent\n  added:\n    agent: ./.amplifier/agent.md\n"
+            )
+
+            sm = SessionManager("./bundle.md")
+            result = sm._resolve_bundle_path(tmpdir)
+
+            # settings.yaml wins over root bundle.md
+            assert result == str(agent_bundle.resolve())
+            assert result != str(root_bundle.resolve())
+
 
 class TestInitialize:
     """Tests for initialize()."""

@@ -14,8 +14,10 @@ across bot restarts when using context-persistent.
 """
 
 import asyncio
+import json
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from slack_bolt.async_app import AsyncApp
@@ -71,6 +73,9 @@ class SlackAmplifierBot:
         self.handler: AsyncSocketModeHandler | None = None
         self.bot_user_id: str | None = None
         self._active_threads: set[str] = set()  # Track threads where bot was mentioned
+        self._active_threads_path = (
+            Path.home() / ".amplifier" / "connectors" / "slack" / "active_threads.json"
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -78,6 +83,9 @@ class SlackAmplifierBot:
 
     async def startup(self) -> None:
         """Load bundle (once) and initialize Slack Bolt app."""
+        # Restore active threads from previous run (so existing threads don't need re-mention)
+        self._load_active_threads()
+
         # Initialize SessionManager (loads and prepares bundle)
         await self.session_manager.initialize()
 
@@ -131,6 +139,39 @@ class SlackAmplifierBot:
             pass
         finally:
             await self.shutdown()
+
+    # ------------------------------------------------------------------
+    # Session management
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Active thread persistence
+    # ------------------------------------------------------------------
+
+    def _load_active_threads(self) -> None:
+        """Load persisted active threads from disk (survives daemon restarts)."""
+        try:
+            if self._active_threads_path.exists():
+                data = json.loads(self._active_threads_path.read_text())
+                self._active_threads = set(data.get("threads", []))
+                logger.info(f"Restored {len(self._active_threads)} active threads from disk")
+        except Exception as e:
+            logger.warning(f"Could not load active threads: {e}")
+
+    def _save_active_threads(self) -> None:
+        """Persist active threads to disk so they survive daemon restarts."""
+        try:
+            self._active_threads_path.parent.mkdir(parents=True, exist_ok=True)
+            self._active_threads_path.write_text(
+                json.dumps({"threads": list(self._active_threads)}, indent=2)
+            )
+        except Exception as e:
+            logger.warning(f"Could not save active threads: {e}")
+
+    def _add_active_thread(self, thread_id: str) -> None:
+        """Mark a thread as active and persist to disk."""
+        self._active_threads.add(thread_id)
+        self._save_active_threads()
 
     # ------------------------------------------------------------------
     # Session management
@@ -242,17 +283,14 @@ class SlackAmplifierBot:
             # The CLI modules provide detailed error messages, so just surface them
             error_msg = str(e)
             logger.error(f"Failed to create session: {error_msg}")
-            
+
             # Post the CLI's error message to Slack
             # It already contains helpful context and suggestions
             try:
                 await client.chat_postMessage(
                     channel=channel,
                     thread_ts=reply_ts,
-                    text=(
-                        f":x: *Failed to create session*\n\n"
-                        f"```{error_msg}```"
-                    ),
+                    text=(f":x: *Failed to create session*\n\n```{error_msg}```"),
                 )
             except SlackApiError:
                 pass
@@ -303,7 +341,14 @@ class SlackAmplifierBot:
                     logger.debug(f"Streaming hooks not available: {e}")
 
                 # Execute through Amplifier
-                prompt = f"<@{user}>: {text.strip()}"
+                # Strip bot mention from text — Slack includes it in the raw message
+                # but the AI only needs the actual content/path the user typed
+                clean_text = text.strip()
+                if self.bot_user_id:
+                    clean_text = re.sub(
+                        rf"<@{re.escape(self.bot_user_id)}>", "", clean_text
+                    ).strip()
+                prompt = f"<@{user}>: {clean_text}"
                 response = await session.execute(prompt)
 
                 # Format and post the final response
@@ -394,7 +439,7 @@ class SlackAmplifierBot:
 
                 # Mark thread as active if bot is mentioned
                 if is_mentioned:
-                    self._active_threads.add(thread_id)
+                    self._add_active_thread(thread_id)
             else:
                 # This is a top-level message (not in a thread)
                 # Only respond if bot is mentioned
@@ -403,7 +448,7 @@ class SlackAmplifierBot:
 
                 # Mark this thread as active (bot's reply will create a thread anchored to ts)
                 thread_id = self._get_thread_id(channel, ts)
-                self._active_threads.add(thread_id)
+                self._add_active_thread(thread_id)
 
             await self.handle_message(
                 channel=channel,
@@ -431,7 +476,7 @@ class SlackAmplifierBot:
 
             # Mark this thread as active (bot was mentioned)
             thread_id = self._get_thread_id(channel, effective_thread_ts)
-            self._active_threads.add(thread_id)
+            self._add_active_thread(thread_id)
 
             await self.handle_message(
                 channel=channel,
@@ -478,13 +523,13 @@ class SlackAmplifierBot:
             try:
                 # Post a message to create the thread
                 result = await client.chat_postMessage(
-                    channel=channel, text=f"<@{user}> started a new Amplifier session"
+                    channel=channel, text=f"<@{user}> started a new Amplifier session in `{text}`"
                 )
                 thread_ts = result["ts"]
                 thread_id = self._get_thread_id(channel, thread_ts)
 
                 # Mark thread as active
-                self._active_threads.add(thread_id)
+                self._add_active_thread(thread_id)
 
                 # Handle the command
                 cmd_result = await self.commands.handle_command(
